@@ -16,3 +16,7 @@ class BookingAlreadyExistsError(DomainError):
 
 class BookingNotFoundError(DomainError):
     """Raised when a booking does not exist."""
+
+
+class BookingOutsideBusinessHoursError(DomainError):
+    """Raised when a booking is not within a bookable appointment slot."""

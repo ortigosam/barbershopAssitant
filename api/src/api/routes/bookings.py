@@ -1,19 +1,38 @@
 from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, status, Path
+from fastapi import APIRouter, HTTPException, Query, status, Path
 
 from src.api.dependencies import BookingServiceDep
 from src.domain.exceptions import (
     BookingAlreadyExistsError,
     BookingNotFoundError,
+    BookingOutsideBusinessHoursError,
     ClientNotFoundError,
 )
-from src.schemas.booking import BookingCreate, BookingResponse, BookingUpdate
+from src.schemas.booking import (
+    AvailabilityResponse,
+    AvailabilityWeek,
+    BookingCreate,
+    BookingResponse,
+    BookingUpdate,
+)
 
 router = APIRouter(
     prefix="/bookings",
     tags=["bookings"],
 )
+
+
+@router.get(
+    "/availability",
+    response_model=AvailabilityResponse,
+    summary="List free appointment slots for this or next week",
+)
+def get_availability(
+    service: BookingServiceDep,
+    week: Annotated[AvailabilityWeek, Query(description="'current' or 'next' week")] = "current",
+) -> AvailabilityResponse:
+    return service.get_availability(week)
 
 
 @router.post(
@@ -40,6 +59,12 @@ def create_booking(
     except BookingAlreadyExistsError as error:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
+            detail=str(error),
+        ) from error
+
+    except BookingOutsideBusinessHoursError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(error),
         ) from error
 
@@ -119,6 +144,10 @@ def update_booking(
             detail=str(error),
         ) from error
 
+    except BookingOutsideBusinessHoursError as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(error),
+        ) from error
+
     return result
-
-

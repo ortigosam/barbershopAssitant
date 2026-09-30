@@ -13,4 +13,7 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
     )
 
-settings = Settings()
+# Instantiate settings once. Pylance may warn about the BaseSettings
+# constructor signature; the precise runtime instantiation is correct so
+# silence the `call-arg` type-checker complaint here.
+settings: Settings = Settings()  # type: ignore[call-arg]
