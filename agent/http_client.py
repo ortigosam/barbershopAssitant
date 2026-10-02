@@ -1,20 +1,47 @@
-"""Reusable HTTP transport; no automatic mutation retries."""
+"""Authenticated channel transport. Identity comes from the adapter, not the LLM."""
+
 import os
+from contextlib import contextmanager
+from contextvars import ContextVar
+
 import httpx
 
 _client = httpx.Client(timeout=10)
+_sender = ContextVar("sender_phone", default=None)
 
-def request(method, path, *, missing="BOOKING_NOT_FOUND", **kwargs):
+
+@contextmanager
+def customer_identity(telephone):
+    token = _sender.set(telephone)
     try:
-        response = _client.request(method, os.getenv("BARBERSHOP_API_URL", "http://localhost:8000").rstrip("/") + path, **kwargs)
+        yield
+    finally:
+        _sender.reset(token)
+
+
+def request(method, path, **kwargs):
+    if not _sender.get():
+        return {"success": False, "error": "UNAUTHENTICATED"}
+    headers = {
+        "Authorization": "Bearer " + os.getenv("AGENT_API_TOKEN", ""),
+        "X-Customer-Phone": _sender.get(),
+    }
+    try:
+        response = _client.request(
+            method,
+            os.getenv("BARBERSHOP_API_URL", "http://localhost:8000").rstrip("/") + path,
+            headers=headers,
+            **kwargs,
+        )
         if response.status_code == 204:
             return {"success": True}
+        data = response.json()
         if response.is_success:
-            return {"success": True, "data": response.json()}
-        detail = response.json().get("detail", "")
-        if response.status_code == 404 and isinstance(detail, str) and detail.startswith("Client"):
-            missing = "CLIENT_NOT_FOUND"
-        error = {404: missing, 409: "BOOKING_ALREADY_EXISTS", 422: "INVALID_SLOT"}.get(response.status_code, "API_ERROR")
-        return {"success": False, "error": error}
+            return {"success": True, "data": data}
+        return {
+            "success": False,
+            "error": data.get("code", "API_ERROR"),
+            "message": data.get("detail"),
+        }
     except (httpx.HTTPError, ValueError):
         return {"success": False, "error": "RESULT_UNKNOWN"}

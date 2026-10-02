@@ -1,8 +1,3 @@
-CREATE TABLE client (
-    telephone VARCHAR(20) PRIMARY KEY,
-    name VARCHAR(59) NOT NULL
-);
-
 -- Additive migration. Legacy booking tables are retained as test archives.
 CREATE TABLE IF NOT EXISTS calendar_settings (
     id INTEGER PRIMARY KEY CHECK (id=1),

@@ -8,17 +8,18 @@ import os
 from pathlib import Path
 from typing import Any
 
-from agent.workflow import BookingConversation, Intent
 from langchain_ollama import ChatOllama
 
 from agent.tools.booking_tools import (
     create_booking,
-    get_booking,
-    update_booking,
     delete_booking,
     get_available_slots,
+    get_booking,
+    list_bookings,
+    update_booking,
 )
-from agent.tools.client_tools import create_client, get_client
+from agent.tools.client_tools import create_client, get_client, update_client
+from agent.workflow import BookingConversation, extraction_schema
 
 
 def _load_local_env() -> None:
@@ -44,7 +45,7 @@ def _load_local_env() -> None:
 _load_local_env()
 
 
-def build_whatsapp_agent(llm: Any | None = None) -> Any:
+def build_whatsapp_agent(llm: Any | None = None, *, customer_phone: str) -> Any:
     """Build the LangChain v1 agent backed by a local Ollama model."""
     model = llm or ChatOllama(
         model=os.getenv("OLLAMA_MODEL", "qwen3:4b"),
@@ -53,19 +54,25 @@ def build_whatsapp_agent(llm: Any | None = None) -> Any:
         reasoning=False,
         num_predict=256,
         num_ctx=4096,
-        keep_alive='30m',
+        keep_alive="30m",
     )
     return BookingConversation(
-        model.with_structured_output(Intent, method='json_schema'),
-        {tool.name: tool for tool in [
-            create_client,
-            get_client,
-            get_available_slots,
-            create_booking,
-            get_booking,
-            update_booking,
-            delete_booking,
-        ]},
+        model.with_structured_output(extraction_schema(), method="json_schema"),
+        {
+            tool.name: tool
+            for tool in [
+                create_client,
+                get_client,
+                update_client,
+                list_bookings,
+                get_available_slots,
+                create_booking,
+                get_booking,
+                update_booking,
+                delete_booking,
+            ]
+        },
+        customer_phone,
     )
 
 
