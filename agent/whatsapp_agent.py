@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from langchain.agents import create_agent
+from agent.workflow import BookingConversation, Intent
 from langchain_ollama import ChatOllama
 
 from agent.tools.booking_tools import (
@@ -20,15 +20,6 @@ from agent.tools.booking_tools import (
 )
 from agent.tools.client_tools import create_client, get_client
 
-
-SYSTEM_PROMPT = """Eres el asistente de una barbería y respondes siempre en español.
-Usa las herramientas para cualquier dato de clientes o citas; nunca inventes
-un identificador, cliente ni hueco. Antes de crear o cambiar una cita consulta
-get_available_slots y usa sólo uno de los huecos devueltos. Si el cliente no
-existe, pide nombre y teléfono y crea el cliente antes de reservar. Antes de
-cancelar o editar, solicita el identificador de la reserva si no lo tienes.
-Confirma al cliente el día, hora e identificador de la cita cuando corresponda.
-"""
 
 def _load_local_env() -> None:
     """Load simple KEY=VALUE entries without adding a dotenv dependency."""
@@ -59,10 +50,14 @@ def build_whatsapp_agent(llm: Any | None = None) -> Any:
         model=os.getenv("OLLAMA_MODEL", "qwen3:4b"),
         base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
         temperature=0,
+        reasoning=False,
+        num_predict=256,
+        num_ctx=4096,
+        keep_alive='30m',
     )
-    return create_agent(
-        model=model,
-        tools=[
+    return BookingConversation(
+        model.with_structured_output(Intent, method='json_schema'),
+        {tool.name: tool for tool in [
             create_client,
             get_client,
             get_available_slots,
@@ -70,18 +65,13 @@ def build_whatsapp_agent(llm: Any | None = None) -> Any:
             get_booking,
             update_booking,
             delete_booking,
-        ],
-        system_prompt=SYSTEM_PROMPT,
+        ]},
     )
 
 
 def handle_whatsapp_message(agent: Any, message: str) -> str:
     """Invoke an agent with one WhatsApp message and return its final text."""
-    result = agent.invoke({"messages": [{"role": "user", "content": message}]})
-    content = result["messages"][-1].content
-    if isinstance(content, str):
-        return content
-    return str(content)
+    return agent.respond(message)
 
 
 __all__ = ["build_whatsapp_agent", "handle_whatsapp_message"]

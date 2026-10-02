@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pathlib import Path
 
 # BaseSettings de pydantic sirve para definir una clase y que te coja los mismos valores del archivo .env
 class Settings(BaseSettings):
@@ -9,7 +10,7 @@ class Settings(BaseSettings):
     postgres_port: int
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=Path(__file__).resolve().parents[1] / '.env',
         env_file_encoding="utf-8",
     )
 
