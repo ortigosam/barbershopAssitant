@@ -19,7 +19,8 @@ from agent.tools.booking_tools import (
     update_booking,
 )
 from agent.tools.client_tools import create_client, get_client, update_client
-from agent.workflow import BookingConversation, extraction_schema
+from agent.understanding import extraction_schema
+from agent.workflow import BookingConversation
 
 
 def _load_local_env() -> None:
@@ -45,7 +46,7 @@ def _load_local_env() -> None:
 _load_local_env()
 
 
-def build_whatsapp_agent(llm: Any | None = None, *, customer_phone: str) -> Any:
+def build_whatsapp_agent(llm: Any | None = None, *, customer_phone: str, clock=None) -> Any:
     """Build the LangChain v1 agent backed by a local Ollama model."""
     model = llm or ChatOllama(
         model=os.getenv("OLLAMA_MODEL", "qwen3:4b"),
@@ -73,6 +74,7 @@ def build_whatsapp_agent(llm: Any | None = None, *, customer_phone: str) -> Any:
             ]
         },
         customer_phone,
+        clock=clock,
     )
 
 

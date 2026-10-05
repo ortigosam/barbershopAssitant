@@ -1,6 +1,8 @@
 from unittest.mock import Mock
+from datetime import datetime
 
-from agent.workflow import SCOPE, BookingConversation, Intent
+from agent.workflow import SCOPE, TOOL_USAGE_RULES, BookingConversation, Intent
+from agent.tools.client_tools import create_client, get_client, update_client
 
 
 def conversation(*intents):
@@ -23,7 +25,8 @@ def conversation(*intents):
         "data": {"bookings": [{"id": 1, "timestamp": "2026-10-06T10:00:00"}]},
     }
     tools["list_bookings"].invoke.return_value = {"success": True, "data": []}
-    return BookingConversation(interpreter, tools, "+34600123456"), tools
+    tools["get_available_slots"].invoke.return_value = {"success": True, "data": {"slots": [{"timestamp": "2026-10-06T10:00:00"}]}}
+    return BookingConversation(interpreter, tools, "+34600123456", clock=lambda: datetime(2026,10,2,12)), tools
 
 
 def test_out_of_scope():
@@ -32,10 +35,25 @@ def test_out_of_scope():
     assert not any(t.invoke.called for t in tools.values())
 
 
+def test_tool_usage_rules_are_in_system_prompt():
+    a, _ = conversation({"action": "out_of_scope"})
+    a.respond("Capital de Francia")
+    prompt = a.interpreter.invoke.call_args.args[0][0][1]
+    assert TOOL_USAGE_RULES in prompt
+
+
+def test_client_tools_have_selection_guidance():
+    assert "SOLO LECTURA" in (get_client.description or "")
+    assert "CLIENT_NOT_FOUND" in (get_client.description or "")
+    assert "ESCRITURA" in (create_client.description or "")
+    assert "CLIENT_ALREADY_EXISTS" in (create_client.description or "")
+    assert "ESCRITURA" in (update_client.description or "")
+
+
 def test_slot_filling_and_exact_confirmation():
     a, tools = conversation(
         {"action": "create_booking"},
-        {"action": "continue", "timestamp": "2026-10-06T10:00:00"},
+        {"action": "continue", "date_text": "6 de octubre", "time_text": "a las 10"},
     )
     assert "día y la hora" in a.respond("Quiero reservar")
     assert (
@@ -47,14 +65,14 @@ def test_slot_filling_and_exact_confirmation():
 
 def test_unknown_reuses_request():
     a, tools = conversation(
-        {"action": "create_booking", "timestamp": "2026-10-06T10:00:00"},
+        {"action": "create_booking", "date_text": "6 de octubre", "time_text": "10:00"},
         {"action": "continue"},
     )
     tools["create_booking"].invoke.return_value = {
         "success": False,
         "error": "RESULT_UNKNOWN",
     }
-    assert "No puedo confirmar" in a.respond("Reserva")
+    assert "No puedo confirmar" in a.respond("Reserva el 6 de octubre a las 10:00")
     key = tools["create_booking"].invoke.call_args.args[0]["request_id"]
     a.respond("Reintenta")
     assert tools["create_booking"].invoke.call_args.args[0]["request_id"] == key
@@ -78,7 +96,7 @@ def test_multiple_owned_appointments_need_selection():
 
 def test_new_customer_and_no_identity_in_model():
     a, tools = conversation(
-        {"action": "create_booking", "timestamp": "2026-10-06T10:00:00"},
+        {"action": "create_booking", "date_text": "6 de octubre", "time_text": "10:00"},
         {"action": "continue", "name": "Ana"},
     )
     tools["get_client"].invoke.return_value = {
@@ -86,7 +104,7 @@ def test_new_customer_and_no_identity_in_model():
         "error": "CLIENT_NOT_FOUND",
     }
     tools["create_client"].invoke.return_value = {"success": True}
-    assert "tu nombre" in a.respond("Reserva")
+    assert "tu nombre" in a.respond("Reserva el 6 de octubre a las 10:00")
     assert "Nos vemos" in a.respond("Ana")
     tools["create_client"].invoke.assert_called_with({"name": "Ana"})
 
@@ -105,13 +123,13 @@ def test_both_weeks():
 
 def test_failure_never_confirms():
     a, tools = conversation(
-        {"action": "create_booking", "timestamp": "2026-10-06T10:00:00"}
+        {"action": "create_booking", "date_text": "6 de octubre", "time_text": "10:00"}
     )
     tools["create_booking"].invoke.return_value = {
         "success": False,
         "error": "MONTHLY_LIMIT",
     }
-    assert "cinco citas" in a.respond("Reserva")
+    assert "cinco citas" in a.respond("Reserva el 6 de octubre a las 10:00")
 
 
 def test_new_intent_replaces_old():
