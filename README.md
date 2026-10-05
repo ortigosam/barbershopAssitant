@@ -1,204 +1,233 @@
 # Barbershop Assistant
 
-Asistente conversacional para una barbería construido con LangChain, FastAPI,
-PostgreSQL y un modelo Qwen ejecutado localmente mediante Ollama.
-
 ## Descripción del producto
 
-El usuario puede interactuar con el agente en lenguaje natural para:
+Asistente de citas con LangChain, **Qwen3:4b local mediante Ollama**, FastAPI,
+PostgreSQL y una agenda web privada para el barbero. No necesita OpenAI.
 
-- crear y consultar clientes;
-- consultar huecos disponibles durante la semana actual o la siguiente;
-- reservar una cita para un cliente;
-- cancelar una reserva;
-- editar la fecha, hora o cliente de una reserva.
+El cliente puede consultar/crear su ficha, actualizar su nombre, consultar sus
+citas, buscar huecos, reservar y cancelar. La web muestra una agenda semanal:
+pulsa una cita para cancelarla o un espacio para crear otra. Permite configurar
+horarios, festivos y vacaciones sin volver a desplegar.
 
-El agente no accede directamente a la base de datos. Utiliza tools de
-LangChain que llaman a la API de FastAPI. La API contiene las reglas de
-negocio y es la fuente única de verdad para clientes y reservas.
+### Reglas de negocio
 
-La arquitectura local es:
-
-```text
-Usuario -> agente LangChain + Qwen/Ollama -> tools HTTP -> API FastAPI -> PostgreSQL
-```
-
-Las citas tienen una duración de 30 minutos y, por defecto, sólo se permiten
-de lunes a sábado, de 10:00 a 14:00 y de 16:00 a 20:00.
+- Un barbero, cortes de 20 minutos sin margen. Lunes–viernes 10:00–14:00 y
+  17:00–21:00; sábado 10:00–14:00; domingo cerrado. Son horarios modificables.
+- Las citas pueden terminar exactamente al cierre. Una excepción sustituye el
+  horario completo de una fecha; sin intervalos significa cerrado.
+- Sólo esta semana y la siguiente (lunes–domingo), hora local `Europe/Madrid`.
+  Reservar y cancelar exige `ahora < inicio`.
+- Máximo cinco citas por cliente y mes de la cita, incluyendo realizadas y futuras.
+  Cancelar borra la cita y libera el hueco y el cupo.
+- Los cortes consecutivos son citas independientes reservadas atómicamente:
+  si algún hueco falla, no se crea ninguna.
+- El estado `completed` se calcula al consultar cuando han pasado los 20 minutos.
+  No necesita un proceso programado ni demuestra asistencia.
+- Se bloquean cambios de horario incompatibles con citas futuras o en curso.
+- Los teléfonos internacionales conservan el prefijo para evitar colisiones.
+  Se normalizan espacios, guiones y `00`. Nueve dígitos españoles usan `+34`;
+  para otros países indica el prefijo internacional.
 
 ## Instalación y configuración
 
-### Requisitos
-
-- Python 3.12 o superior, pero inferior a 3.14.
-- `uv` para instalar y ejecutar el proyecto.
-- Docker y Docker Compose.
-- Ollama.
-- Un modelo Qwen instalado en Ollama.
-
-Instala las dependencias del proyecto desde la raíz:
+Necesitas Python 3.12/3.13, uv, Docker Desktop y Ollama. Desde la raíz:
 
 ```bash
-uv sync
+uv sync --all-packages
 ```
 
-### Archivos de configuración
+Cada componente lee su propio archivo. `.env.example` sólo es una plantilla;
+en una instalación nueva cópiala a `.env` y sustituye los valores de ejemplo.
 
-Cada componente tiene su propia configuración:
+| Archivo | Variables |
+| --- | --- |
+| `database/.env` | `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB` |
+| `api/.env` | Las mismas credenciales, `POSTGRES_HOST=localhost`, `POSTGRES_PORT=5432`, `ADMIN_API_TOKEN`, `AGENT_API_TOKEN` |
+| `agent/.env` | `OLLAMA_BASE_URL`, `OLLAMA_MODEL`, `BARBERSHOP_API_URL`, `AGENT_API_TOKEN` |
 
-- `database/.env`: credenciales que Docker utiliza para crear PostgreSQL.
-- `api/.env`: credenciales y host/puerto que FastAPI usa para conectarse a PostgreSQL.
-- `agent/.env`: URL y nombre del modelo local de Ollama.
+Las variables del proceso tienen prioridad. Los `.env` reales están ignorados
+por Git. Genera dos claves distintas ejecutando dos veces:
 
-No subas los archivos `.env` reales al repositorio.
-
-Ejemplo de `database/.env`:
-
-```env
-POSTGRES_USER=barbershop
-POSTGRES_PASSWORD=barbershop
-POSTGRES_DB=barbershop
+```bash
+uv run python -c 'import secrets; print(secrets.token_urlsafe(32))'
 ```
 
-Ejemplo de `api/.env`:
-
-```env
-POSTGRES_USER=barbershop
-POSTGRES_PASSWORD=barbershop
-POSTGRES_DB=barbershop
-POSTGRES_HOST=localhost
-POSTGRES_PORT=5432
-```
-
-Ejemplo de `agent/.env`:
-
-```env
-OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=qwen3:4b
-```
-
-## Ejecución local
-
-Cada proceso debe mantenerse ejecutándose en una terminal independiente.
+Una será `ADMIN_API_TOKEN` (web) y otra `AGENT_API_TOKEN` (canal). La segunda
+debe coincidir en API y agente. **En esta instalación local ya están configuradas.**
+No las compartas. Reinicia API/agente después de cambiar variables de entorno.
 
 ### 1. Levantar PostgreSQL con Docker
 
-Abre Docker Desktop y arranca el proyecto o contenedor de PostgreSQL que
-tengas configurado. Si Docker Desktop está configurado para iniciar ese
-proyecto automáticamente, bastará con abrir la aplicación y esperar a que el
-contenedor aparezca como `Running`.
-
-Esto inicia el contenedor `barbershop-assistant-postgres` y publica
-PostgreSQL en `localhost:5432`.
-
-Como alternativa, puedes arrancarlo desde la terminal, desde la raíz del
-proyecto:
+Abre Docker Desktop. Si ya está configurado el arranque automático, basta con
+esperar a que `barbershop-assistant-postgres` aparezca como **Running**.
+La política `unless-stopped` no arranca un contenedor detenido expresamente;
+en ese caso pulsa Start. Alternativa desde la raíz:
 
 ```bash
-cd database
-docker compose --env-file .env up -d
+docker compose --env-file database/.env -f database/docker-compose.yml up -d
 ```
 
-Se necesita levantarlo porque la API guarda y consulta ahí los clientes y las
-reservas. Sin PostgreSQL, los endpoints de FastAPI no pueden funcionar.
+PostgreSQL queda en `localhost:5432`. Debe estar activo porque guarda clientes,
+horarios y reservas; el volumen conserva los datos entre reinicios.
 
-La primera vez hay que crear las tablas. Puedes hacerlo desde una terminal:
+**Base nueva**, una sola vez desde la raíz:
 
 ```bash
-docker exec -i barbershop-assistant-postgres \
-  psql -U barbershop -d barbershop < schema.sql
+docker exec -i barbershop-assistant-postgres sh -c 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < database/schema.sql
 ```
 
-También puedes abrir una terminal dentro del contenedor desde Docker Desktop
-y ejecutar allí el mismo comando adaptando la ruta a `schema.sql`.
-
-Si has elegido otro usuario o base de datos, sustituye esos valores. Puedes
-comprobar el contenedor con:
+**Base de una versión anterior**, aplica en su lugar:
 
 ```bash
-docker compose ps
+docker exec -i barbershop-assistant-postgres sh -c 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < database/migrations/002_calendar.sql
 ```
 
-### 2. Levantar el servidor API
+La migración 002 **ya está aplicada en esta instalación**. Crea `appointment`,
+`calendar_settings` y `calendar_receipt`. Conserva clientes y tablas anteriores,
+pero la nueva agenda **no utiliza ni importa las antiguas citas de prueba de
+30 minutos**. No borra esos datos. La migración 001 es histórica y no hace falta
+para la nueva agenda. No ejecutes `schema.sql` sobre una base existente.
 
-En una segunda terminal, desde la raíz:
+### 2. Levantar la API y la web
+
+En otra terminal, desde la raíz:
 
 ```bash
 cd api
-uv run fastapi dev api/src/main.py
+uv run fastapi dev src/main.py
 ```
 
-La API queda disponible en `http://localhost:8000` y su documentación
-interactiva en `http://localhost:8000/docs`.
+Mantén la terminal abierta. La API aplica las reglas y las transacciones; el
+agente y la web no acceden directamente a PostgreSQL.
 
-Hay que mantener este servidor activo porque las tools del agente no llaman a
-PostgreSQL directamente: llaman a endpoints como `POST /clients`,
-`GET /bookings/availability?week=current|next`, `POST /bookings`,
-`PUT /bookings/{booking_id}` y `DELETE /bookings/{booking_id}`.
+- Agenda: [http://localhost:8000](http://localhost:8000). Introduce el valor
+  `ADMIN_API_TOKEN` de `api/.env`; sólo se mantiene en memoria del navegador.
+- Documentación HTTP: [http://localhost:8000/docs](http://localhost:8000/docs).
 
-### 3. Levantar Ollama y el modelo Qwen
+La web no necesita Node ni un servidor adicional. Pulsa una cita para cancelarla;
+**Horarios y cierres** permite editar la configuración. La agenda
+se refresca cada minuto y tiene actualización manual.
 
-En macOS puedes instalar Ollama mediante Homebrew. Si todavía no tienes
-Homebrew, instálalo desde [brew.sh](https://brew.sh/). Después ejecuta:
+### 3. Instalar y levantar el modelo local
+
+En macOS, con Homebrew instalado:
 
 ```bash
 brew install ollama
-```
-
-Este comando descarga e instala Ollama en tu equipo. Una vez instalado,
-arranca el servidor local en una tercera terminal:
-
-```bash
 ollama serve
 ```
 
-`ollama serve` deja disponible la API local de Ollama en
-`http://localhost:11434`, que es la dirección utilizada por el agente.
-
-En una cuarta terminal, descarga el modelo una sola vez:
+El primer comando descarga e instala Ollama. El segundo mantiene su API local
+en `http://localhost:11434`. Si ya está ejecutándose, no abras otra instancia.
+En otra terminal descarga el modelo una sola vez:
 
 ```bash
 ollama pull qwen3:4b
 ollama list
 ```
 
-Hay que mantener Ollama activo porque LangChain utiliza `ChatOllama` para
-enviar el mensaje al modelo local y recibir sus decisiones sobre qué tool
-ejecutar. No se necesita una API key de OpenAI ni un proveedor cloud.
+Configuración de `agent/.env`:
+
+```dotenv
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=qwen3:4b
+BARBERSHOP_API_URL=http://localhost:8000
+AGENT_API_TOKEN=el_mismo_secreto_de_canal_que_en_api
+```
+
+Ollama interpreta los mensajes, FastAPI ejecuta las operaciones y Docker aloja
+los datos. Los tres deben permanecer activos. No necesitas API key cloud.
 
 ### 4. Probar el agente
 
-Con PostgreSQL, FastAPI y Ollama activos, ejecuta desde la raíz:
+Desde la raíz:
 
 ```bash
-uv run python -m agent.cli
+uv run python -m agent.cli --phone +34600123456
 ```
 
-Prueba, por ejemplo:
+Sin `--phone`, el CLI pide el número inicial. Este número **simula el remitente
+autenticado**; Qwen no lo extrae del mensaje. Prueba:
 
 ```text
-¿Qué huecos hay disponibles la próxima semana?
+¿Existe mi ficha?
+Crea mi ficha, me llamo Ana.
+¿Qué huecos hay la próxima semana?
+Quiero reservar el [fecha disponible] a las 10:00.
+Consulta mis citas.
+Cancela mi cita.
+¿Cuál es la capital de Francia?
+salir
 ```
+
+Si tienes varias citas, muestra las tuyas y pregunta cuál gestionar. Una reserva
+confirmada siempre usa este formato, con los datos devueltos por la API:
+`Nos vemos el martes 6 de octubre a las 10:00.`
+Un timeout produce resultado incierto y pide comprobar las citas antes de repetir.
+
+## Arquitectura, seguridad y rendimiento
 
 ```text
-Quiero reservar el lunes a las 10:00. Me llamo Carlos y mi teléfono es 600123456.
+CLI / futuro WhatsApp -> agente + tools HTTP ─┐
+Web del barbero -----------------------------┤
+                                            v
+API -> aplicación -> dominio
+            |
+     puerto de persistencia -> PostgreSQL
 ```
 
-Escribe `salir` para terminar. También puedes verificar directamente la API:
+- `api/src/domain`: reglas puras de calendario, teléfonos y límites temporales.
+- `api/src/application`: casos de uso, cupos, propiedad y transacciones;
+  depende de contratos `Protocol`, no de FastAPI ni PostgreSQL.
+- `api/src/repositories`: adaptador PostgreSQL.
+- `api/src/api`: adaptación HTTP/autenticación. `agent/` y `web/` son clientes.
+
+Esto aplica responsabilidad única e inversión de dependencias sin jerarquías
+innecesarias. Para un barbero, un bloqueo transaccional de agenda serializa
+operaciones y protege cupos y cambios de horario. Una restricción de exclusión
+PostgreSQL impide solapamientos incluso en SQL directo. Mover libera y ocupa
+en la misma transacción. La respuesta de éxito sale después del commit.
+
+Cada creación lleva un UUID: repetir la misma petición no duplica citas.
+Cancelar borra la cita e invalida su recibo, conservando únicamente el identificador
+y hash de la operación, no un historial de la cita. El reintento no la resucita.
+
+El agente combina JSON estructurado, lista cerrada de operaciones, validación
+Pydantic, estado conversacional y plantillas deterministas. No publica texto
+libre de Qwen. Las cuestiones ajenas reciben una plantilla de alcance. Esto
+reduce prompt injection, pero no garantiza clasificación perfecta: los permisos
+y las reglas se comprueban siempre fuera del modelo.
+
+Una llamada al modelo por mensaje, sin historial completo ni listas de huecos;
+sin segunda llamada para redactar. Razonamiento desactivado, salida limitada,
+modelo cargado durante 30 minutos y conexiones HTTP reutilizadas. Elegir una
+cita por su número evita incluso la llamada al modelo.
+
+**WhatsApp todavía no está conectado.** Al elegir proveedor, su adaptador debe
+validar la firma del webhook, deduplicar mensajes, extraer el remitente verificado
+y mantener una conversación por teléfono. La identidad se inyecta fuera del LLM.
+La API exige secreto de canal y `X-Customer-Phone`; el modelo no puede elegir
+ese header. El CLI no prueba posesión del teléfono: es una simulación local.
+
+El secreto administrativo es una solución inicial local. Antes de publicar:
+HTTPS, login/sesiones de administrador, limitación de peticiones y gestión de
+secretos. No publiques la API de desarrollo ni expongas claves en JavaScript.
+
+## Comprobaciones
+
+Desde la raíz:
 
 ```bash
-curl "http://localhost:8000/bookings/availability?week=next"
+PYTHONPATH=api:api/tests:. uv run pytest -q tests api/tests
 ```
 
-## Parar los servicios
-
-Para apagar PostgreSQL sin borrar sus datos:
+Con PostgreSQL y Ollama activos:
 
 ```bash
-cd database
-docker compose stop
+RUN_POSTGRES_TESTS=1 RUN_OLLAMA_TESTS=1 PYTHONPATH=api:api/tests:. uv run pytest -q tests api/tests
 ```
 
-Para volver a arrancarlo usa `docker compose start`. Para detener y eliminar
-el contenedor conservando el volumen de datos usa `docker compose down`.
-`uvicorn` y `ollama serve` se detienen con `Ctrl+C` en sus terminales.
+Las pruebas PostgreSQL utilizan un esquema temporal independiente y lo eliminan
+al terminar. Las del modelo usan tools simuladas. Se comprueban propiedad,
+límites, concurrencia, idempotencia, cancelación, cambios atómicos y Qwen real.

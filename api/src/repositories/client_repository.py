@@ -1,41 +1,20 @@
-from typing import Any, Optional, Tuple, LiteralString, cast
-
-from psycopg import Connection
-from psycopg_pool import ConnectionPool
+"""Persistence operations for customer records."""
 
 
-ClientRow = Tuple[str, str]
+class PostgresClientRepository:
+    def __init__(self, connection):
+        self.connection = connection
 
+    def get(self, telephone):
+        row = self.connection.execute(
+            "SELECT telephone, name FROM client WHERE telephone=%s", (telephone,)
+        ).fetchone()
+        return {"telephone": row[0], "name": row[1]} if row else None
 
-class ClientRepository:
-
-    def __init__(self, pool: ConnectionPool[Connection[Any]]):
-        self.pool: ConnectionPool[Connection[Any]] = pool
-
-    def get_by_telephone(self, telephone: str) -> Optional[ClientRow]:
-        with self.pool.connection() as connection:
-            with connection.cursor() as cursor:
-                qry: LiteralString = """
-                SELECT telephone, name
-                FROM client
-                WHERE telephone = %s
-                """
-                cursor.execute(qry, (telephone,))
-
-                return cast(Optional[ClientRow], cursor.fetchone())
-
-    def create(self, telephone: str, name: str) -> ClientRow:
-        with self.pool.connection() as connection:
-            with connection.cursor() as cursor:
-                qry: LiteralString = """
-                INSERT INTO client (telephone, name)
-                VALUES (%s, %s)
-                RETURNING telephone, name
-                """
-                cursor.execute(qry, (telephone, name))
-
-                client = cast(Optional[ClientRow], cursor.fetchone())
-                connection.commit()
-
-                assert client is not None
-                return client
+    def save(self, telephone, name):
+        self.connection.execute(
+            "INSERT INTO client (telephone,name) VALUES (%s,%s) "
+            "ON CONFLICT(telephone) DO UPDATE SET name=excluded.name",
+            (telephone, name),
+        )
+        return {"telephone": telephone, "name": name}

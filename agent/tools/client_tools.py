@@ -1,46 +1,73 @@
-
-import httpx
 from langchain_core.tools import tool
 
-from agent.models.booking import Client, CreateClientResult, GetClientResult
-
-
-API_URL = "http://localhost:8000"
+from agent.http_client import request
 
 
 @tool
-def create_client(telephone: str, name: str) -> CreateClientResult:
-    """Create a customer before making their first booking.
+def get_client() -> dict:
+    """Consulta la ficha del cliente autenticado.
 
-    Ask for both their phone number and name before calling this tool.
+    Selecciona esta tool cuando el usuario pregunte si tiene ficha, si está
+    registrado o quiera consultar sus propios datos básicos.
+
+    La identidad se obtiene del teléfono verificado del canal y no se recibe
+    como argumento. Nunca pidas ni envíes un teléfono para elegir otra ficha.
+
+    Esta es una operación de SOLO LECTURA: no crea ni modifica clientes.
+    Si no existe una ficha, devuelve ``success=false`` con el código
+    ``CLIENT_NOT_FOUND``. Si existe, devuelve ``success=true`` y sus datos.
+
+    No la uses para:
+    - crear una ficha (usa ``create_client``);
+    - cambiar el nombre (usa ``update_client``);
+    - listar todos los clientes, porque el usuario sólo puede consultar su
+      propia ficha.
     """
-    try:
-        response = httpx.post(
-            f"{API_URL}/clients", json={"telephone": telephone, "name": name}, timeout=10
-        )
-    except httpx.HTTPError:
-        return CreateClientResult(success=False, error="API_UNAVAILABLE", message="The booking API is unavailable.")
-
-    if response.status_code == 409:
-        return CreateClientResult(success=False, error="CLIENT_ALREADY_EXISTS", message="Client already exists")
-
-    response.raise_for_status()
-    data = response.json()
-
-    return CreateClientResult(success=True, client=Client.model_validate(data), message="Client created.")
+    return request("GET", "/clients/me")
 
 
 @tool
-def get_client(telephone: str) -> GetClientResult:
-    """Look up a customer by phone number before creating a booking."""
-    try:
-        response = httpx.get(f"{API_URL}/clients/{telephone}", timeout=10)
-    except httpx.HTTPError:
-        return GetClientResult(success=False, error="API_UNAVAILABLE", message="The booking API is unavailable.")
+def create_client(name: str) -> dict:
+    """Crea una ficha para el cliente autenticado.
 
-    if response.status_code == 404:
-        return GetClientResult(success=False, error="CLIENT_NOT_FOUND", message="Client not found")
+    Selecciona esta tool cuando el usuario pida registrarse, crear su ficha o
+    darse de alta, y haya proporcionado su nombre. El teléfono del cliente lo
+    aporta la identidad verificada del canal; nunca lo extraigas del mensaje
+    ni lo añadas como argumento.
 
-    response.raise_for_status()
-    data = response.json()
-    return GetClientResult(success=True, client=Client.model_validate(data))
+    Parámetros:
+    - ``name``: nombre que el usuario ha indicado explícitamente, limpio y no
+      vacío. No inventes un nombre ni uses el teléfono como nombre.
+
+    Esta es una operación de ESCRITURA. Sólo se ha creado la ficha si la
+    respuesta contiene ``success=true``. Si la ficha ya existe, devuelve
+    ``CLIENT_ALREADY_EXISTS``; en ese caso no afirmes que se ha creado y ofrece
+    ``update_client`` si el usuario quería cambiar su nombre.
+
+    No la uses para consultar si existe una ficha (usa ``get_client``) ni para
+    cambiar un nombre existente (usa ``update_client``).
+    """
+    return request("POST", "/clients/me", json={"name": name})
+
+
+@tool
+def update_client(name: str) -> dict:
+    """Actualiza el nombre de la ficha del cliente autenticado.
+
+    Selecciona esta tool únicamente cuando el usuario quiera cambiar, corregir
+    o actualizar su propio nombre y haya proporcionado el nuevo nombre de forma
+    explícita. La identidad se toma del teléfono verificado del canal; no
+    acepta ni cambia el teléfono.
+
+    Parámetros:
+    - ``name``: nuevo nombre indicado por el usuario. No conserves el nombre
+      anterior si el usuario ha proporcionado uno nuevo y no inventes valores.
+
+    Esta es una operación de ESCRITURA. No confirmes que el nombre se ha
+    actualizado hasta recibir ``success=true``. Un fallo de la API significa
+    que el cambio no está confirmado.
+
+    No la uses para crear una ficha nueva (usa ``create_client``), comprobar si
+    existe (usa ``get_client``).
+    """
+    return request("PUT", "/clients/me", json={"name": name})

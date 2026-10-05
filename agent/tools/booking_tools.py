@@ -1,202 +1,168 @@
 from datetime import datetime
 from typing import Literal
 
-import httpx
 from langchain_core.tools import tool
 
-from agent.models.booking import (
-    AvailabilityResult,
-    AvailableSlot,
-    Booking,
-    CreateBookingResult,
-    GetBookingResult,
-    UpdateBookingResult,
-    DeleteBookingResult,
-)
+from agent.http_client import request
 
+@tool
+def get_available_slots(
+    week: Literal["current", "next"] = "current",
+    count: int = 1,
+) -> dict:
+    """
+    Get the available appointment start times for the current or next week.
 
-API_URL = "http://localhost:8000"
+    Use this tool when:
+    - The user asks what appointment times are available.
+    - The user asks for a free slot, free time, availability, or when they can book.
+    - The user wants to make a booking but has not chosen an exact
+      available time yet.
+    - You need to verify which times are available before asking the user
+      to choose one.
+
+    Do NOT use this tool to:
+    - Create a booking.
+    - List appointments already owned by the user.
+    - Cancel an existing booking.
+
+    Parameters:
+    - week:
+        "current" -> search availability in the current week.
+        "next" -> search availability in the following week.
+    - count:
+        Number of consecutive 20-minute appointment slots required.
+        Use 1 for a normal 20-minute appointment.
+        Use 2 for 40 consecutive minutes, 3 for 60 minutes, etc.
+
+    This tool only returns availability. It does NOT reserve any slot.
+    """
+    return request(
+        "GET",
+        "/bookings/availability",
+        params={"week": week, "count": count},
+    )
 
 
 @tool
-def get_available_slots(week: Literal["current", "next"] = "current") -> AvailabilityResult:
-    """List free 30-minute appointment slots for the current or next week.
-
-    Use ``current`` for this week and ``next`` for the following week. Always
-    check availability before creating or moving a booking.
+def list_bookings() -> dict:
     """
-    try:
-        response = httpx.get(f"{API_URL}/bookings/availability", params={"week": week}, timeout=10)
-    except httpx.HTTPError:
-        return AvailabilityResult(success=False, error="API_UNAVAILABLE", message="The booking API is unavailable.")
+    List all upcoming appointments belonging to the authenticated user.
 
-    response.raise_for_status()
-    data = response.json()
-    return AvailabilityResult(
-        success=True,
-        week=data["week"],
-        week_start=data["week_start"],
-        week_end=data["week_end"],
-        slots=[AvailableSlot.model_validate(slot) for slot in data["slots"]],
-    )
+    Use this tool when:
+    - The user asks what appointments or bookings they currently have.
+    - The user asks when their next appointment is.
+    - The user wants to see their upcoming appointments.
+    - The user wants to cancel an appointment but has not provided
+      its booking_id. Use the returned bookings to identify the correct one.
+
+    Do NOT use this tool to:
+    - Search for available appointment times.
+    - Create a new booking.
+    - Cancel an appointment.
+
+    No parameters are required because the authenticated sender is
+    automatically used to identify the customer.
+    """
+    return request("GET", "/bookings")
 
 
 @tool
 def create_booking(
     timestamp: datetime,
-    telephone: str,
-) -> CreateBookingResult:
+    request_id: str,
+    count: int = 1,
+) -> dict:
     """
-    Create a new booking for an existing client.
+    Create and confirm a new appointment for the authenticated user.
 
-    Use this tool when the customer wants to book an appointment.
-    The customer must already exist.
+    Use this tool ONLY when:
+    - The user clearly wants to book, reserve, or create an appointment.
+    - The exact appointment date and start time are known.
+    - The user has selected or explicitly requested that specific time.
 
-    Args:
-        timestamp: Date and time of the appointment.
-        telephone: Customer's telephone number.
+    Do NOT use this tool when:
+    - The user is only asking about availability.
+    - The user has not yet chosen a specific date and time.
+    - The user wants to cancel an appointment.
+    - The user only wants to see their existing appointments.
+
+    Parameters:
+    - timestamp:
+        Exact date and start time requested by the user.
+        Never invent or guess a missing date or time.
+    - request_id:
+        Unique identifier for this booking request, used to make creation
+        idempotent and avoid accidental duplicate bookings.
+        Reuse the same request_id when retrying the same booking operation.
+    - count:
+        Number of consecutive 20-minute appointment slots to book.
+        Use 1 for a normal 20-minute appointment.
+        Use 2 for 40 consecutive minutes, 3 for 60 minutes, etc.
+
+    Calling this tool performs the actual booking. Do not claim that the
+    appointment was successfully booked unless this tool returns success.
     """
-    try:
-        response = httpx.post(
-            f"{API_URL}/bookings",
-            json={"timestamp": timestamp.isoformat(), "telephone": telephone},
-            timeout=10,
-        )
-    except httpx.HTTPError:
-        return CreateBookingResult(success=False, error="API_UNAVAILABLE", message="The booking API is unavailable.")
-
-    if response.status_code == 404:
-        return CreateBookingResult(
-            success=False,
-            error="CLIENT_NOT_FOUND",
-            message="The customer does not exist.",
-        )
-
-    if response.status_code == 409:
-        return CreateBookingResult(
-            success=False,
-            error="BOOKING_ALREADY_EXISTS",
-            message="There is already a booking at that time.",
-        )
-
-    if response.status_code == 422:
-        return CreateBookingResult(
-            success=False, error="INVALID_SLOT", message="That time is not a future available barber-shop slot."
-        )
-
-    response.raise_for_status()
-    # pydantic v2: `parse_obj` is deprecated in favor of `model_validate`.
-    booking = Booking.model_validate(response.json())
-    return CreateBookingResult(success=True, booking=booking)
-
-
-@tool
-def get_booking(
-    booking_id: int,
-) -> GetBookingResult:
-    """
-    Get an existing booking by its ID.
-
-    Args:
-        booking_id: The booking ID.
-    """
-    try:
-        response = httpx.get(f"{API_URL}/bookings/{booking_id}", timeout=10)
-    except httpx.HTTPError:
-        return GetBookingResult(success=False, error="API_UNAVAILABLE", message="The booking API is unavailable.")
-
-    if response.status_code == 404:
-        return GetBookingResult(
-            success=False,
-            error="BOOKING_NOT_FOUND",
-            message="The booking does not exist.",
-        )
-
-    response.raise_for_status()
-    booking = Booking.model_validate(response.json())
-    return GetBookingResult(success=True, booking=booking)
-
-
-@tool
-def update_booking(
-    booking_id: int,
-    timestamp: datetime | None = None,
-    telephone: str | None = None,
-) -> UpdateBookingResult:
-    """
-    Update an existing booking.
-
-    Use this tool when a customer wants to change
-    the date or time of an appointment.
-
-    Args:
-        booking_id: The booking ID.
-        timestamp: New date and time, if it changes.
-        telephone: Customer's telephone number, if it changes.
-    """
-    try:
-        response = httpx.put(
-            f"{API_URL}/bookings/{booking_id}",
-            json={
-                key: value
-                for key, value in {
-                    "timestamp": timestamp.isoformat() if timestamp else None,
-                    "telephone": telephone,
-                }.items()
-                if value is not None
-            },
-            timeout=10,
-        )
-    except httpx.HTTPError:
-        return UpdateBookingResult(success=False, error="API_UNAVAILABLE", message="The booking API is unavailable.")
-
-    if response.status_code == 404:
-        return UpdateBookingResult(
-            success=False,
-            error="BOOKING_NOT_FOUND",
-            message="The booking does not exist.",
-        )
-
-    if response.status_code == 409:
-        return UpdateBookingResult(
-            success=False,
-            error="BOOKING_ALREADY_EXISTS",
-            message="There is already a booking at that time.",
-        )
-
-    if response.status_code == 422:
-        return UpdateBookingResult(
-            success=False, error="INVALID_SLOT", message="That time is not a future available barber-shop slot."
-        )
-
-    response.raise_for_status()
-    booking = Booking.model_validate(response.json())
-    return UpdateBookingResult(success=True, booking=booking)
-
-
-@tool
-def delete_booking(
-    booking_id: int,
-) -> DeleteBookingResult:
-    """
-    Cancel an existing booking.
-
-    Args:
-        booking_id: The booking ID.
-    """
-    try:
-        response = httpx.delete(f"{API_URL}/bookings/{booking_id}", timeout=10)
-    except httpx.HTTPError:
-        return DeleteBookingResult(success=False, error="API_UNAVAILABLE", message="The booking API is unavailable.")
-
-    if response.status_code == 404:
-        return DeleteBookingResult(
-            success=False,
-            error="BOOKING_NOT_FOUND",
-            message="The booking does not exist.",
-        )
-
-    response.raise_for_status()
-    return DeleteBookingResult(
-        success=True, message="Booking cancelled successfully.", booking_id=booking_id
+    return request(
+        "POST",
+        "/bookings",
+        json={
+            "timestamp": timestamp.isoformat(),
+            "request_id": request_id,
+            "count": count,
+        },
     )
+
+
+@tool
+def get_booking(booking_id: int) -> dict:
+    """
+    Retrieve the details of one specific appointment belonging to the
+    authenticated user.
+
+    Use this tool when:
+    - You already know the booking_id and need the details of that booking.
+    - You need to inspect or verify a specific appointment before another
+      operation.
+
+    Do NOT use this tool when:
+    - You do not know the booking_id. Use list_bookings instead.
+    - The user asks for all their appointments. Use list_bookings.
+    - The user asks for available appointment times.
+    - The user wants to create a new appointment.
+
+    Parameters:
+    - booking_id:
+        Identifier of an existing booking owned by the authenticated user.
+        Never invent a booking_id.
+    """
+    return request("GET", f"/bookings/{booking_id}")
+
+
+@tool
+def delete_booking(booking_id: int) -> dict:
+    """
+    Cancel an existing appointment belonging to the authenticated user.
+
+    Use this tool ONLY when:
+    - The user clearly wants to cancel, delete, or remove an existing
+      appointment.
+    - The booking_id of the appointment to cancel is known.
+
+    If the user wants to cancel an appointment but the booking_id is unknown,
+    first use list_bookings to identify the correct appointment.
+
+    Do NOT use this tool to:
+    - Create an appointment.
+    - Search for available times.
+    - Cancel an appointment when it is unclear which booking the user means.
+
+    Parameters:
+    - booking_id:
+        Identifier of the existing appointment to cancel.
+        Never invent a booking_id.
+
+    Calling this tool performs the actual cancellation. Do not tell the user
+    that the appointment was cancelled unless this tool returns success.
+    """
+    return request("DELETE", f"/bookings/{booking_id}")

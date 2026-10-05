@@ -1,16 +1,37 @@
-# Barbershop Assistant API
+# API de la barbería
 
-The API is the source of truth for customers and appointments. It exposes:
+Desde `api/`: `uv run fastapi dev src/main.py`.
+Consulta el [README principal](../README.md) para configuración y pruebas.
 
-- `POST /clients` — create a customer.
-- `GET /clients/{telephone}` — retrieve a customer.
-- `GET /bookings/availability?week=current|next` — list free 30-minute slots.
-- `POST /bookings` — create an appointment.
-- `GET /bookings/{booking_id}` — retrieve an appointment.
-- `PUT /bookings/{booking_id}` — change its time and/or customer.
-- `DELETE /bookings/{booking_id}` — cancel it.
+## Canal del cliente
 
-Appointments use local `Europe/Madrid` wall-clock time and must be on Monday
-through Saturday, from 10:00 to 14:00 or 16:00 to 20:00, at 30-minute
-intervals. The availability endpoint returns only unoccupied slots (and omits
-past times from the current week).
+Requiere `Authorization: Bearer <AGENT_API_TOKEN>` y
+`X-Customer-Phone: <remitente verificado>`; nunca extraigas este último del mensaje.
+
+- `GET /clients/me`: consultar ficha.
+- `POST /clients/me`: crear (`name`).
+- `PUT /clients/me`: guardar nombre (`name`).
+- `GET /bookings/availability?week=current|next&count=1`: huecos.
+- `GET /bookings`: citas propias próximas.
+- `POST /bookings`: `timestamp`, `count` (1–5), `request_id` (UUID).
+- `GET /bookings/{id}`: cita propia.
+- `DELETE /bookings/{id}`: borrar y liberar hueco/cupo.
+
+Fechas ISO locales de Madrid sin offset, por ejemplo `2026-10-06T10:00:00`.
+Errores de negocio: `code` estable y `detail` para presentación.
+
+## Administración
+
+Requiere `Authorization: Bearer <ADMIN_API_TOKEN>`, distinto del secreto de canal.
+
+- `GET /admin/bookings?start=...&end=...`: agenda por rango.
+- `GET /admin/availability?week=current|next&count=1`: huecos libres para crear una cita desde la web.
+- `POST /admin/bookings`: reserva más `telephone` y `name`.
+- `DELETE /admin/bookings/{id}`: cancelar y liberar el hueco.
+- `GET /admin/settings`: horario y versión.
+- `PUT /admin/settings`: `weekly`, `exceptions`, `version` recibida al leer.
+
+`weekly` contiene claves `"0"` a `"6"` (lunes–domingo), con listas de pares
+`["10:00","14:00"]`. `exceptions` usa fechas `YYYY-MM-DD`, con la misma estructura;
+una lista vacía cierra ese día. Cambios incompatibles o versiones obsoletas
+devuelven conflicto. La web se sirve en `/`.
