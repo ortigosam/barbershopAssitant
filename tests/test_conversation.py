@@ -15,7 +15,6 @@ def conversation(*intents):
         "get_available_slots",
         "list_bookings",
         "create_booking",
-        "update_booking",
         "delete_booking",
     )
     tools = {name: Mock() for name in names}

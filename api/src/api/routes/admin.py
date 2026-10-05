@@ -1,11 +1,12 @@
 """Barber administration endpoints."""
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, Response
 from pydantic import NaiveDatetime
 from src.api.routes.dependencies import Service
 from src.api.routes.schemas import (
     AdminReservationInput,
-    MoveInput,
     SettingsInput,
 )
 from src.api.security import administrator
@@ -22,15 +23,24 @@ def list_admin(app: Service, start: NaiveDatetime, end: NaiveDatetime):
     return app.list_bookings(None, start, end, admin=True)
 
 
+@router.get("/availability")
+def admin_availability(
+    app: Service,
+    week: Literal["current", "next"] = "current",
+    count: int = 1,
+):
+    """Return bookable slots for the admin calendar form.
+
+    It uses the same availability use case as the customer API, so the web
+    never offers a slot that the booking transaction would reject.
+    """
+    return app.availability(week, count)
+
+
 @router.post("/bookings", status_code=201)
 def create_admin_booking(body: AdminReservationInput, app: Service):
     app.save_customer(body.telephone, body.name)
     return app.reserve(body.telephone, body.timestamp, body.count, str(body.request_id))
-
-
-@router.put("/bookings/{identifier}")
-def update_admin_booking(identifier: int, body: MoveInput, app: Service):
-    return app.move(None, identifier, body.timestamp, admin=True)
 
 
 @router.delete("/bookings/{identifier}", status_code=204)

@@ -70,9 +70,6 @@ class PostgresTransaction:
     def insert(self, timestamp, telephone):
         return self.bookings.create(timestamp, telephone)
 
-    def move(self, identifier, timestamp):
-        return self.bookings.move(identifier, timestamp)
-
     def delete(self, identifier):
         self.bookings.delete(identifier)
         self.receipts.invalidate_for_booking(identifier)

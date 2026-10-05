@@ -33,11 +33,5 @@ class PostgresBookingRepository:
         ).fetchone()
         return self.get(row[0])
 
-    def move(self, identifier, timestamp):
-        self.connection.execute(
-            "UPDATE appointment SET timestamp=%s WHERE id=%s", (timestamp, identifier)
-        )
-        return self.get(identifier)
-
     def delete(self, identifier):
         self.connection.execute("DELETE FROM appointment WHERE id=%s", (identifier,))

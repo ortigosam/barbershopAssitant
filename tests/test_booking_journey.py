@@ -24,8 +24,6 @@ def test_reported_conversation_creates_exact_slot_and_finishes_signup(booking_ap
         {"action": "get_available_slots", "date_text": "hoy", "time_text": "a las ..."},
         {"action": "create_booking"},
         {"action": "get_client", "name": "Miguel"},
-        {"action": "list_bookings"},
-        {"action": "update_booking", "date_text": "mañana", "time_text": "10:00"},
         {"action": "delete_booking"},
     )
     assert agent.respond("dime la receta de una tortilla francesa") == SCOPE
@@ -41,13 +39,8 @@ def test_reported_conversation_creates_exact_slot_and_finishes_signup(booking_ap
     assert agent.respond("me llamo Miguel") == "Nos vemos el viernes 2 de octubre a las 17:00."
     booking = service.list_bookings(PHONE)[0]
     assert booking["timestamp"] == "2026-10-02T17:00:00"
-    assert "17:00" in agent.respond("Consulta mis citas")
-    assert agent.respond("Cámbiala a mañana a las 10:00") == "Nos vemos el sábado 3 de octubre a las 10:00."
-    assert service.get(PHONE, booking["id"])["timestamp"] == "2026-10-03T10:00:00"
-    assert {"timestamp": "2026-10-02T17:00:00"} in service.availability("current")["slots"]
     assert agent.respond("Cancela mi cita") == "Tu reserva se ha cancelado correctamente."
     assert service.list_bookings(PHONE) == []
-    assert {"timestamp": "2026-10-03T10:00:00"} in service.availability("current")["slots"]
 
 
 def test_ambiguous_time_asks_before_writing(booking_api):

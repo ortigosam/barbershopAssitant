@@ -68,6 +68,6 @@ def update_client(name: str) -> dict:
     que el cambio no está confirmado.
 
     No la uses para crear una ficha nueva (usa ``create_client``), comprobar si
-    existe (usa ``get_client``) ni para modificar una reserva.
+    existe (usa ``get_client``).
     """
     return request("PUT", "/clients/me", json={"name": name})

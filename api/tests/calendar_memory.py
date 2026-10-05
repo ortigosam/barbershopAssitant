@@ -66,13 +66,6 @@ class MemoryStore:
         self.bookings[value.id] = value
         return value
 
-    def move(self, identifier, timestamp):
-        old = self.bookings[identifier]
-        self.bookings[identifier] = Appointment(
-            identifier, timestamp, old.telephone, old.name
-        )
-        return self.bookings[identifier]
-
     def delete(self, identifier):
         self.bookings.pop(identifier)
         for receipt in self.receipts.values():
@@ -119,9 +112,6 @@ class MemoryBookings:
 
     def create(self, timestamp, telephone):
         return self.store.insert(timestamp, telephone)
-
-    def move(self, identifier, timestamp):
-        return self.store.move(identifier, timestamp)
 
     def delete(self, identifier):
         self.store.bookings.pop(identifier)

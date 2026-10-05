@@ -19,10 +19,6 @@ class ReservationInput(Input):
     request_id: UUID
 
 
-class MoveInput(Input):
-    timestamp: NaiveDatetime
-
-
 class AdminReservationInput(ReservationInput):
     telephone: str
     name: str = Field(min_length=1, max_length=59)

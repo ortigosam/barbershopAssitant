@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Response
 from src.api.routes.dependencies import Actor, Service
-from src.api.routes.schemas import MoveInput, ReservationInput
+from src.api.routes.schemas import ReservationInput
 
 router = APIRouter(prefix="/bookings", tags=["bookings"])
 
@@ -20,11 +20,6 @@ def create_booking(body: ReservationInput, customer: Actor, app: Service):
 @router.get("/{identifier}")
 def get_booking(identifier: int, customer: Actor, app: Service):
     return app.get(customer, identifier)
-
-
-@router.put("/{identifier}")
-def update_booking(identifier: int, body: MoveInput, customer: Actor, app: Service):
-    return app.move(customer, identifier, body.timestamp)
 
 
 @router.delete("/{identifier}", status_code=204)

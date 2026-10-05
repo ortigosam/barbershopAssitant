@@ -23,7 +23,7 @@ from agent.understanding import (
 
 logger = logging.getLogger(__name__)
 
-SCOPE = "Solo puedo ayudarte a consultar, reservar, modificar o cancelar citas."
+SCOPE = "Solo puedo ayudarte a consultar, reservar o cancelar citas."
 TOOL_USAGE_RULES = """TOOL USAGE RULES
 
 1. Never invent missing information.
@@ -32,7 +32,7 @@ TOOL_USAGE_RULES = """TOOL USAGE RULES
 
 2. Read operations and write operations are different.
    - get_available_slots, list_bookings and get_booking only read information.
-   - create_booking, update_booking and delete_booking modify real data.
+   - create_booking and delete_booking modify real data.
 
 3. Never claim that a booking was created, updated, or cancelled unless
    the corresponding tool was called and returned a successful result.
@@ -86,7 +86,7 @@ class BookingConversation:
              TOOL_USAGE_RULES + "\nClasifica la petición de un cliente de barbería. Devuelve sólo JSON. "
              "get_client=mi ficha; create_client=crear ficha; update_client=cambiar mi nombre; "
              "get_available_slots=consultar huecos; list_bookings=mis citas; "
-             "create_booking=quiero reservar; update_booking=mover mi cita; delete_booking=cancelar mi cita. "
+             "create_booking=quiero reservar; delete_booking=cancelar mi cita. "
              "La intención de reservar tiene prioridad sobre mencionar huecos. "
              "continue=aportar nombre, día u hora a la gestión pendiente; abort=abandonar la petición sin cancelar citas. "
              'Si se pide nombre, me llamo Ana -> {"action":"continue","name":"Ana"}; conserva la reserva pendiente. '
@@ -123,7 +123,7 @@ class BookingConversation:
         if action == "out_of_scope":
             return SCOPE
         if action == "greeting":
-            return "Hola. Puedo ayudarte a consultar, reservar, modificar o cancelar tu cita."
+            return "Hola. Puedo ayudarte a consultar, reservar o cancelar tu cita."
         if action == "thanks":
             return "De nada. Aquí estoy para ayudarte con tus citas."
         if action == "frustration":
@@ -179,13 +179,13 @@ class BookingConversation:
         old_waiting = self.waiting_field
         if action != self.pending.get("action"):
             self.pending = {}
-            if action in ("create_booking", "update_booking") and references_previous(message):
+            if action == "create_booking" and references_previous(message):
                 self.pending.update(self.last_selection)
         try:
             day, times = temporal_details(
                 message, data.pop("date_text", None), data.pop("time_text", None),
                 self.clock().date(), bare_time=old_waiting == "time",
-            ) if action in ("create_booking", "update_booking", "get_available_slots") else (None, None)
+            ) if action in ("create_booking", "get_available_slots") else (None, None)
         except ValueError:
             self.pending["action"] = action
             self.pending.pop("day", None)
@@ -199,7 +199,7 @@ class BookingConversation:
             "get_client": (), "create_client": ("name",), "update_client": ("name",),
             "list_bookings": (), "delete_booking": ("booking_id",),
             "get_available_slots": ("week", "count"),
-            "create_booking": ("name", "count"), "update_booking": ("booking_id",),
+            "create_booking": ("name", "count"),
         }
         data = {k: v for k, v in data.items() if k in allowed[action]}
         if "count" in allowed[action]:
@@ -227,7 +227,7 @@ class BookingConversation:
             if not 0 <= offset < 14:
                 return self.error({"error": "INVALID_SLOT"})
             self.pending["week"] = "current" if offset < 7 else "next"
-        if action in ("create_booking", "update_booking", "get_available_slots"):
+        if action in ("create_booking", "get_available_slots"):
             self.last_selection = {k: self.pending[k] for k in ("day", "times") if k in self.pending}
         self.waiting_field = None
         return self.safe_execute()
@@ -248,7 +248,7 @@ class BookingConversation:
             p["timestamp"] = candidates[0]
             return None
         # Resolve colloquial 12-hour times against real offered availability.
-        # This is only interpretation; POST/PUT still rechecks in a transaction.
+        # This is only interpretation; the booking POST still rechecks in a transaction.
         available = set(self.offered_slots) & set(candidates)
         if len(available) != 1:
             today = self.clock().date()
@@ -280,11 +280,11 @@ class BookingConversation:
         if action in ("create_client", "update_client") and not p.get("name"):
             self.waiting_field = "name"
             return "Por favor, indica tu nombre."
-        if action in ("create_booking", "update_booking"):
+        if action == "create_booking":
             clarification = self.resolve_timestamp()
             if clarification:
                 return clarification
-        if action in ("update_booking", "delete_booking") and not p.get("booking_id"):
+        if action == "delete_booking" and not p.get("booking_id"):
             result = self.call("list_bookings")
             if not result["success"]:
                 return self.error(result)
@@ -322,7 +322,6 @@ class BookingConversation:
             "get_available_slots": ("week", "count"),
             "list_bookings": (),
             "create_booking": ("timestamp", "request_id", "count"),
-            "update_booking": ("booking_id", "timestamp"),
             "delete_booking": ("booking_id",),
         }
         if action == "get_available_slots" and p.get("week") == "both":
@@ -344,9 +343,6 @@ class BookingConversation:
             self.last_selection = {}
             self.choices = {b["id"]: b for b in data["bookings"]}
             return "\n".join(confirmation(b["timestamp"]) for b in data["bookings"])
-        if action == "update_booking":
-            self.choices[data["id"]] = data
-            return confirmation(data["timestamp"])
         if action == "delete_booking":
             self.choices.pop(p["booking_id"], None)
             return "Tu reserva se ha cancelado correctamente."
@@ -394,7 +390,7 @@ class BookingConversation:
             "BOOKING_ALREADY_EXISTS": "Ese horario ya no está disponible. Puedo consultar otros horarios.",
             "MONTHLY_LIMIT": "Puedes reservar como máximo cinco citas por mes, contando las ya realizadas.",
             "BOOKING_STARTED": result.get("message")
-            or "Ya no se puede modificar o cancelar esta cita.",
+            or "Ya no se puede cancelar esta cita.",
             "INVALID_SLOT": "Ese horario no es válido. Elige un hueco futuro de esta semana o la siguiente.",
             "UNAUTHENTICATED": "No puedo verificar tu identidad. Revisa la configuración del canal.",
         }.get(

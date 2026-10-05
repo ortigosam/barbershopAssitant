@@ -154,12 +154,10 @@ def require_owner(booking, actor, admin=False):
         raise RuleError("BOOKING_NOT_FOUND", "No encuentro esa reserva.", 404)
 
 
-def require_not_started(booking, now, cancelling=False):
+def require_cancellable(booking, now):
     if now >= booking.timestamp:
         raise RuleError(
             "BOOKING_STARTED",
-            "Ya no se puede cancelar"
-            if cancelling
-            else "Ya no se puede modificar esta cita.",
+            "Ya no se puede cancelar esta cita.",
             409,
         )

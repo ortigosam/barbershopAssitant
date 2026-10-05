@@ -59,8 +59,5 @@ def test_reported_journey_with_real_qwen_and_http_tools(booking_api):
     assert "17:00" in say("reserva el dia que te he dicho a la hora que te he dicho")
     assert say("me llamo Miguel") == "Nos vemos el viernes 2 de octubre a las 17:00."
     assert service.list_bookings("+34600123456")[0]["timestamp"] == "2026-10-02T17:00:00"
-    assert "17:00" in say("Consulta mis citas")
-    assert say("Quiero cambiar mi cita a mañana a las 10:00") == "Nos vemos el sábado 3 de octubre a las 10:00."
-    assert service.list_bookings("+34600123456")[0]["timestamp"] == "2026-10-03T10:00:00"
     assert say("Cancela mi cita") == "Tu reserva se ha cancelado correctamente."
     assert service.list_bookings("+34600123456") == []

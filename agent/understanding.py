@@ -16,7 +16,7 @@ class Intent(BaseModel):
     model_config = ConfigDict(extra="forbid")
     action: Literal[
         "get_client", "create_client", "update_client", "get_available_slots",
-        "list_bookings", "create_booking", "update_booking", "delete_booking",
+        "list_bookings", "create_booking", "delete_booking",
         "continue", "out_of_scope", "greeting", "thanks", "frustration", "abort",
     ]
     name: str | None = Field(default=None, min_length=1, max_length=59)

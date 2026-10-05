@@ -1,6 +1,6 @@
 const $ = id => document.getElementById(id);
 const days = ['Lunes','Martes','Miércoles','Jueves','Viernes','Sábado','Domingo'];
-let token = '', bookings = [], settings = null, editing = null, requestId = null, firstMinute = 540;
+let token = '', bookings = [], settings = null, selectedBooking = null, requestId = null, firstMinute = 540, availableByDate = new Map();
 function madridToday(){return new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Madrid',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());}
 function localDate(value){return new Date(value+'T12:00:00');}
 function iso(date){return [date.getFullYear(),String(date.getMonth()+1).padStart(2,'0'),String(date.getDate()).padStart(2,'0')].join('-');}
@@ -15,6 +15,37 @@ async function api(path, options={}){
  return data;
 }
 function el(tag,text,cls){const node=document.createElement(tag);if(text!==undefined)node.textContent=text;if(cls)node.className=cls;return node;}
+function dateLabel(value){return localDate(value).toLocaleDateString('es-ES',{weekday:'long',day:'numeric',month:'long'});}
+async function availableBookingSlots(count){
+ const [current,next]=await Promise.all([
+  api('/admin/availability?'+new URLSearchParams({week:'current',count})),
+  api('/admin/availability?'+new URLSearchParams({week:'next',count}))
+ ]);
+ return [...current.slots,...next.slots];
+}
+function fillTimeOptions(byDate,date,preferred){
+ const select=$('appointment-form').elements.time;select.replaceChildren();
+ for(const slot of byDate.get(date)??[]){
+  const option=new Option(slot.slice(11,16),slot.slice(11,16));select.append(option);
+ }
+ if(preferred && [...select.options].some(option=>option.value===preferred))select.value=preferred;
+ if(!select.value && select.options.length)select.selectedIndex=0;
+}
+async function fillBookingChoices(preferredDate=null,preferredTime=null){
+ const count=Number($('appointment-form').elements.count.value||1);
+ const slots=await availableBookingSlots(count);
+ const byDate=new Map();
+ for(const slot of slots){const date=slot.timestamp.slice(0,10);if(!byDate.has(date))byDate.set(date,[]);byDate.get(date).push(slot.timestamp);}
+ availableByDate=byDate;
+ const dateSelect=$('appointment-form').elements.date;
+ const dates=[...byDate.keys()];
+ dateSelect.min=dates[0]??'';dateSelect.max=dates.at(-1)??'';
+ dateSelect.dataset.availableDates=dates.join(',');
+ const date=preferredDate&&byDate.has(preferredDate)?preferredDate:dates[0];
+ dateSelect.value=date??'';
+ fillTimeOptions(byDate,date,preferredTime);
+ return slots.length;
+}
 async function refresh(){
  try {
   [bookings,settings]=await Promise.all([api('/admin/bookings?'+new URLSearchParams({start:iso(week)+'T00:00:00',end:iso(shift(week,7))+'T00:00:00'})),api('/admin/settings')]);
@@ -39,7 +70,7 @@ function render(){
   column.onclick=e=>{if(e.target!==column)return;const mins=Math.floor((e.clientY-column.getBoundingClientRect().top)/24)*20+firstMinute;openAppointment(null,date,String(Math.floor(mins/60)).padStart(2,'0')+':'+String(mins%60).padStart(2,'0'));};
   for(const b of bookings.filter(b=>b.timestamp.slice(0,10)===date)){
    const button=el('button',b.timestamp.slice(11,16)+' · '+b.name,'appointment '+b.status);button.style.top=position(b.timestamp.slice(11,16))+'px';button.style.height='24px';
-   button.title=b.name+' · '+b.telephone+' · '+b.timestamp.slice(11,16);button.onclick=()=>openAppointment(b);column.append(button);
+   button.title=b.name+' · '+b.telephone+' · '+b.timestamp.slice(11,16);button.onclick=()=>openBooking(b);column.append(button);
   }body.append(column);
  }root.append(heads,body);
 }
@@ -51,29 +82,74 @@ $('login-form').onsubmit=async e=>{
 $('logout').onclick=()=>{token='';bookings=[];$('calendar').replaceChildren();$('workspace').hidden=true;$('connected').hidden=true;$('login').hidden=false;};
 $('previous').onclick=()=>{week=shift(week,-7);refresh();};$('next').onclick=()=>{week=shift(week,7);refresh();};$('today').onclick=()=>{week=monday(localDate(madridToday()));refresh();};$('refresh').onclick=refresh;
 document.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>$(b.dataset.close).close());
-function openAppointment(booking,date=madridToday(),time='10:00'){
- editing=booking;requestId=crypto.randomUUID();const form=$('appointment-form');form.reset();$('appointment-error').textContent='';
- $('appointment-title').textContent=booking?'Gestionar cita':'Nueva cita';
- $('appointment-status').textContent=booking?booking.name+' · '+booking.telephone+' · '+(booking.status==='completed'?'Completada':'Confirmada'):'';
- form.elements.date.value=booking?booking.timestamp.slice(0,10):date;form.elements.time.value=booking?booking.timestamp.slice(11,16):time;
- $('customer-fields').hidden=!!booking;$('count-field').hidden=!!booking;
- const started=booking && booking.timestamp<=new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Madrid',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(new Date()).replace(' ','T');
- $('cancel-booking').hidden=!booking||started;$('save-booking').hidden=!!started;
- form.elements.name.required=!booking;form.elements.telephone.required=!booking;$('appointment-dialog').showModal();
+function openAppointment(date=madridToday(),time='10:00'){
+ selectedBooking=null;requestId=crypto.randomUUID();const form=$('appointment-form');form.reset();$('appointment-error').textContent='';
+ $('appointment-title').textContent='Nueva cita';$('appointment-status').textContent='';
+ $('customer-fields').hidden=false;$('appointment-fields').hidden=false;$('booking-details').hidden=true;
+ [...$('appointment-fields').querySelectorAll('input, select')].forEach(field=>field.disabled=false);
+ form.elements.name.required=true;form.elements.telephone.required=true;
+ form.elements.date.disabled=true;form.elements.time.disabled=true;
+ $('cancel-booking').hidden=true;$('save-booking').hidden=false;$('save-booking').disabled=true;$('appointment-dialog').showModal();
+ fillBookingChoices(date,time).then(total=>{
+  if(!total){$('appointment-error').textContent='No hay huecos disponibles esta semana ni la siguiente.';return;}
+  form.elements.date.disabled=false;form.elements.time.disabled=false;
+  $('save-booking').disabled=false;
+ }).catch(error=>{$('appointment-error').textContent=error.message;});
 }
-$('new').onclick=()=>openAppointment(null);
+function openBooking(booking){
+ selectedBooking=booking;const form=$('appointment-form');form.reset();$('appointment-error').textContent='';
+ $('appointment-title').textContent='Cita';$('appointment-status').textContent=booking.name+' · '+booking.telephone;
+ $('customer-fields').hidden=true;$('appointment-fields').hidden=true;$('booking-details').hidden=false;
+ [...$('appointment-fields').querySelectorAll('input, select')].forEach(field=>field.disabled=true);
+ $('booking-details').textContent=booking.timestamp.slice(0,16).replace('T',' a las ')+' · '+(booking.status==='completed'?'Completada':'Confirmada');
+ const started=booking.timestamp<=new Intl.DateTimeFormat('sv-SE',{timeZone:'Europe/Madrid',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}).format(new Date()).replace(' ','T');
+ $('cancel-booking').hidden=!!started;$('save-booking').hidden=true;$('appointment-dialog').showModal();
+}
+$('new').onclick=()=>openAppointment();
+const dateField=$('appointment-form').elements.date;
+dateField.addEventListener('click',()=>{
+ if(typeof dateField.showPicker==='function'){
+  try{dateField.showPicker();}catch(_error){/* el navegador ya tiene el selector abierto */}
+ }
+});
+dateField.addEventListener('keydown',event=>{
+ if(!['Tab','Escape','ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key))event.preventDefault();
+});
+$('appointment-form').elements.date.onchange=()=>{
+ const date=$('appointment-form').elements.date.value;
+ const time=$('appointment-form').elements.time;
+ if(!availableByDate.has(date)){
+  time.replaceChildren();$('save-booking').disabled=true;
+  $('appointment-error').textContent='Ese día no tiene huecos disponibles.';
+  return;
+ }
+ fillTimeOptions(availableByDate,date,time.value);$('appointment-error').textContent='';
+ $('save-booking').disabled=!time.value;
+};
+$('appointment-form').elements.count.onchange=()=>{
+ const date=$('appointment-form').elements.date.value;const time=$('appointment-form').elements.time.value;
+ $('save-booking').disabled=true;
+ fillBookingChoices(date,time).then(total=>{$('save-booking').disabled=!total;}).catch(error=>{$('appointment-error').textContent=error.message;});
+};
 $('appointment-form').oninput=()=>{requestId=crypto.randomUUID();};
 $('appointment-form').onsubmit=async e=>{
  e.preventDefault();const f=e.target.elements;const timestamp=f.date.value+'T'+f.time.value+':00';$('save-booking').disabled=true;
  try{
-  const payload=editing?{timestamp}:{timestamp,name:f.name.value,telephone:f.telephone.value,count:Number(f.count.value),request_id:requestId};
-  await api('/admin/bookings'+(editing?'/'+editing.id:''),{method:editing?'PUT':'POST',body:JSON.stringify(payload)});
+  const digits=f.telephone.value.replace(/\D/g,'');
+  const prefix=f['country-code'].value;
+  const countryDigits=prefix.slice(1);
+  const raw=f.telephone.value.trim();
+  const international=raw.startsWith('+')||raw.startsWith('00');
+  const normalized=raw.startsWith('00')?digits.slice(2):digits;
+  const local=international&&normalized.startsWith(countryDigits)?normalized.slice(countryDigits.length):digits;
+  const payload={timestamp,name:f.name.value,telephone:prefix+local,count:Number(f.count.value),request_id:requestId};
+  await api('/admin/bookings',{method:'POST',body:JSON.stringify(payload)});
   $('appointment-dialog').close();await refresh();$('notice').textContent='Cita guardada correctamente.';
  }catch(error){$('appointment-error').textContent=error.message;}finally{$('save-booking').disabled=false;}
 };
 $('cancel-booking').onclick=async()=>{
  if(!confirm('¿Cancelar esta cita y liberar su horario?'))return;
- try{await api('/admin/bookings/'+editing.id,{method:'DELETE'});$('appointment-dialog').close();await refresh();$('notice').textContent='Cita cancelada. El horario vuelve a estar disponible.';}
+ try{await api('/admin/bookings/'+selectedBooking.id,{method:'DELETE'});$('appointment-dialog').close();await refresh();$('notice').textContent='Cita cancelada. El horario vuelve a estar disponible.';}
  catch(error){$('appointment-error').textContent=error.message;}
 };
 function scheduleRow(label,windows,exception=false){

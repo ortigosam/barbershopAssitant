@@ -54,16 +54,6 @@ def test_cancel_releases_slot_and_receipt_cannot_recreate(app):
         reserve(app, key=key)
 
 
-def test_move_preserves_old_if_new_occupied_and_releases_old_after_success(app):
-    first = reserve(app)[0]
-    reserve(app, hour=11, actor=B)
-    with pytest.raises(RuleError):
-        app.move(A, first["id"], datetime(2026, 10, 5, 11))
-    assert app.get(A, first["id"])["timestamp"] == "2026-10-05T10:00:00"
-    app.move(A, first["id"], datetime(2026, 10, 5, 12))
-    reserve(app, actor=B)
-
-
 def test_batch_rollback_and_monthly_quota(app):
     reserve(app, minute=40, actor=B)
     with pytest.raises(RuleError):
@@ -81,7 +71,6 @@ def test_owner_checks(app):
     for action in [
         lambda: app.get(B, booking["id"]),
         lambda: app.cancel(B, booking["id"]),
-        lambda: app.move(B, booking["id"], datetime(2026, 10, 6, 10)),
     ]:
         with pytest.raises(RuleError) as error:
             action()
@@ -93,8 +82,6 @@ def test_cutoff_and_completed(app):
     app.clock = lambda: datetime(2026, 10, 5, 10)
     with pytest.raises(RuleError):
         app.cancel(A, booking["id"])
-    with pytest.raises(RuleError):
-        app.move(A, booking["id"], datetime(2026, 10, 6, 10))
     assert app.get(A, booking["id"])["status"] == "confirmed"
     app.clock = lambda: datetime(2026, 10, 5, 10, 20)
     assert app.get(A, booking["id"])["status"] == "completed"

@@ -15,7 +15,6 @@ Requiere `Authorization: Bearer <AGENT_API_TOKEN>` y
 - `GET /bookings`: citas propias próximas.
 - `POST /bookings`: `timestamp`, `count` (1–5), `request_id` (UUID).
 - `GET /bookings/{id}`: cita propia.
-- `PUT /bookings/{id}`: nuevo `timestamp`, mismo propietario.
 - `DELETE /bookings/{id}`: borrar y liberar hueco/cupo.
 
 Fechas ISO locales de Madrid sin offset, por ejemplo `2026-10-06T10:00:00`.
@@ -26,8 +25,9 @@ Errores de negocio: `code` estable y `detail` para presentación.
 Requiere `Authorization: Bearer <ADMIN_API_TOKEN>`, distinto del secreto de canal.
 
 - `GET /admin/bookings?start=...&end=...`: agenda por rango.
+- `GET /admin/availability?week=current|next&count=1`: huecos libres para crear una cita desde la web.
 - `POST /admin/bookings`: reserva más `telephone` y `name`.
-- `PUT /admin/bookings/{id}` y `DELETE /admin/bookings/{id}`: gestionar.
+- `DELETE /admin/bookings/{id}`: cancelar y liberar el hueco.
 - `GET /admin/settings`: horario y versión.
 - `PUT /admin/settings`: `weekly`, `exceptions`, `version` recibida al leer.
 

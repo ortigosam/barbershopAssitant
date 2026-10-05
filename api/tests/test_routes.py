@@ -44,7 +44,7 @@ def test_authentication_and_identity(client):
             headers=headers,
             json={"telephone": "+447700900123"},
         ).status_code
-        == 422
+        == 405
     )
     assert client.get("/admin/settings", headers=headers).status_code == 401
     assert client.delete(f"/bookings/{identifier}", headers=headers).status_code == 204
@@ -53,5 +53,10 @@ def test_authentication_and_identity(client):
 def test_admin_and_static_shell(client):
     headers = {"Authorization": "Bearer test-admin"}
     assert client.get("/admin/settings", headers=headers).status_code == 200
+    availability = client.get(
+        "/admin/availability?week=current&count=1", headers=headers
+    )
+    assert availability.status_code == 200
+    assert availability.json()["slots"]
     assert client.get("/").status_code == 200
     assert "La agenda" in client.get("/").text

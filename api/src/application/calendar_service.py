@@ -12,7 +12,7 @@ from src.domain.calendar import (
     Calendar,
     RuleError,
     phone,
-    require_not_started,
+    require_cancellable,
     require_owner,
     validate_start,
 )
@@ -178,23 +178,11 @@ class BarbershopService:
             require_owner(booking, phone(actor) if not admin else None, admin)
             return booking.result(self.clock())
 
-    def move(self, actor, identifier, timestamp, admin=False):
-        with self.store.transaction() as tx:
-            now = self.clock()
-            booking = tx.bookings.get(identifier)
-            require_owner(booking, phone(actor) if not admin else None, admin)
-            require_not_started(booking, now)
-            calendar, _ = tx.schedule.get()
-            validate_start(calendar, timestamp, now)
-            self._free(tx, timestamp, identifier)
-            self._quota(tx, booking.telephone, [timestamp], identifier)
-            return tx.bookings.move(identifier, timestamp).result(now)
-
     def cancel(self, actor, identifier, admin=False):
         with self.store.transaction() as tx:
             booking = tx.bookings.get(identifier)
             require_owner(booking, phone(actor) if not admin else None, admin)
-            require_not_started(booking, self.clock(), cancelling=True)
+            require_cancellable(booking, self.clock())
             tx.bookings.delete(identifier)
             tx.receipts.invalidate_for_booking(identifier)
 

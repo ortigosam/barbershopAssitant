@@ -6,8 +6,8 @@ Asistente de citas con LangChain, **Qwen3:4b local mediante Ollama**, FastAPI,
 PostgreSQL y una agenda web privada para el barbero. No necesita OpenAI.
 
 El cliente puede consultar/crear su ficha, actualizar su nombre, consultar sus
-citas, buscar huecos, reservar, mover y cancelar. La web muestra una agenda semanal:
-pulsa una cita para gestionarla o un espacio para crear otra. Permite configurar
+citas, buscar huecos, reservar y cancelar. La web muestra una agenda semanal:
+pulsa una cita para cancelarla o un espacio para crear otra. Permite configurar
 horarios, festivos y vacaciones sin volver a desplegar.
 
 ### Reglas de negocio
@@ -17,12 +17,11 @@ horarios, festivos y vacaciones sin volver a desplegar.
 - Las citas pueden terminar exactamente al cierre. Una excepción sustituye el
   horario completo de una fecha; sin intervalos significa cerrado.
 - Sólo esta semana y la siguiente (lunes–domingo), hora local `Europe/Madrid`.
-  Reservar, mover y cancelar exige `ahora < inicio`.
+  Reservar y cancelar exige `ahora < inicio`.
 - Máximo cinco citas por cliente y mes de la cita, incluyendo realizadas y futuras.
   Cancelar borra la cita y libera el hueco y el cupo.
 - Los cortes consecutivos son citas independientes reservadas atómicamente:
   si algún hueco falla, no se crea ninguna.
-- Mover cambia sólo día/hora, nunca propietario. Si falla, conserva la cita antigua.
 - El estado `completed` se calcula al consultar cuando han pasado los 20 minutos.
   No necesita un proceso programado ni demuestra asistencia.
 - Se bloquean cambios de horario incompatibles con citas futuras o en curso.
@@ -106,8 +105,8 @@ agente y la web no acceden directamente a PostgreSQL.
   `ADMIN_API_TOKEN` de `api/.env`; sólo se mantiene en memoria del navegador.
 - Documentación HTTP: [http://localhost:8000/docs](http://localhost:8000/docs).
 
-La web no necesita Node ni un servidor adicional. Pulsa una cita para moverla
-o cancelarla; **Horarios y cierres** permite editar la configuración. La agenda
+La web no necesita Node ni un servidor adicional. Pulsa una cita para cancelarla;
+**Horarios y cierres** permite editar la configuración. La agenda
 se refresca cada minuto y tiene actualización manual.
 
 ### 3. Instalar y levantar el modelo local
@@ -157,7 +156,6 @@ Crea mi ficha, me llamo Ana.
 ¿Qué huecos hay la próxima semana?
 Quiero reservar el [fecha disponible] a las 10:00.
 Consulta mis citas.
-Quiero mover mi cita al [otro día disponible] a las 11:00.
 Cancela mi cita.
 ¿Cuál es la capital de Francia?
 salir

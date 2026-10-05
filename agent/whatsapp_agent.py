@@ -16,7 +16,6 @@ from agent.tools.booking_tools import (
     get_available_slots,
     get_booking,
     list_bookings,
-    update_booking,
 )
 from agent.tools.client_tools import create_client, get_client, update_client
 from agent.understanding import extraction_schema
@@ -69,7 +68,6 @@ def build_whatsapp_agent(llm: Any | None = None, *, customer_phone: str, clock=N
                 get_available_slots,
                 create_booking,
                 get_booking,
-                update_booking,
                 delete_booking,
             ]
         },
