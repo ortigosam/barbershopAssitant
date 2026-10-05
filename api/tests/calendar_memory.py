@@ -24,7 +24,7 @@ class MemoryStore:
     def transaction(self):
         snapshot = deepcopy(self.__dict__)
         try:
-            yield self
+            yield MemoryTransaction(self)
         except Exception:
             self.__dict__ = snapshot
             raise
@@ -84,3 +84,71 @@ class MemoryStore:
 
     def save_receipt(self, key, fingerprint, ids):
         self.receipts[key] = dict(fingerprint=fingerprint, ids=ids, invalidated=False)
+
+
+class MemoryTransaction:
+    """Small in-memory UnitOfWork adapter used by application tests."""
+
+    def __init__(self, store):
+        self.clients = MemoryClients(store)
+        self.bookings = MemoryBookings(store)
+        self.schedule = MemorySchedule(store)
+        self.receipts = MemoryReceipts(store)
+
+
+class MemoryClients:
+    def __init__(self, store):
+        self.store = store
+
+    def get(self, telephone):
+        return self.store.customer(telephone)
+
+    def save(self, telephone, name):
+        return self.store.save_customer(telephone, name)
+
+
+class MemoryBookings:
+    def __init__(self, store):
+        self.store = store
+
+    def list(self, start, end, telephone=None):
+        return self.store.appointments(start, end, telephone)
+
+    def get(self, identifier):
+        return self.store.appointment(identifier)
+
+    def create(self, timestamp, telephone):
+        return self.store.insert(timestamp, telephone)
+
+    def move(self, identifier, timestamp):
+        return self.store.move(identifier, timestamp)
+
+    def delete(self, identifier):
+        self.store.bookings.pop(identifier)
+
+
+class MemorySchedule:
+    def __init__(self, store):
+        self.store = store
+
+    def get(self):
+        return self.store.calendar()
+
+    def save(self, calendar):
+        return self.store.save_calendar(calendar)
+
+
+class MemoryReceipts:
+    def __init__(self, store):
+        self.store = store
+
+    def get(self, key):
+        return self.store.receipt(key)
+
+    def save(self, key, fingerprint, ids):
+        return self.store.save_receipt(key, fingerprint, ids)
+
+    def invalidate_for_booking(self, identifier):
+        for receipt in self.store.receipts.values():
+            if identifier in receipt["ids"]:
+                receipt.update(ids=[], invalidated=True)

@@ -5,7 +5,7 @@ import json
 from collections import Counter
 from datetime import datetime, time, timedelta
 
-from src.application.ports import CalendarStore
+from src.application.ports import BarbershopStore
 from src.domain.calendar import (
     DURATION,
     MAX_MONTHLY,
@@ -20,12 +20,12 @@ from src.domain.schedule import madrid_now
 
 
 class BarbershopService:
-    def __init__(self, store: CalendarStore, clock=madrid_now):
+    def __init__(self, store: BarbershopStore, clock=madrid_now):
         self.store, self.clock = store, clock
 
     def customer(self, actor):
         with self.store.transaction() as tx:
-            result = tx.customer(phone(actor))
+            result = tx.clients.get(phone(actor))
             if not result:
                 raise RuleError(
                     "CLIENT_NOT_FOUND", "No encuentro una ficha con ese teléfono.", 404
@@ -40,11 +40,11 @@ class BarbershopService:
             )
         with self.store.transaction() as tx:
             actor = phone(actor)
-            if create_only and tx.customer(actor):
+            if create_only and tx.clients.get(actor):
                 raise RuleError(
                     "CLIENT_ALREADY_EXISTS", "La ficha de cliente ya existe.", 409
                 )
-            return tx.save_customer(actor, name)
+            return tx.clients.save(actor, name)
 
     def availability(self, week, count=1):
         if week not in ("current", "next") or not 1 <= count <= 5:
@@ -54,8 +54,8 @@ class BarbershopService:
         first = monday + timedelta(days=7 if week == "next" else 0)
         last = first + timedelta(days=7)
         with self.store.transaction() as tx:
-            calendar, _ = tx.calendar()
-            occupied = tx.appointments(
+            calendar, _ = tx.schedule.get()
+            occupied = tx.bookings.list(
                 datetime.combine(first, time.min), datetime.combine(last, time.min)
             )
             slots = []
@@ -81,7 +81,7 @@ class BarbershopService:
             )
 
     def _free(self, tx, start, exclude=None):
-        if any(b.id != exclude for b in tx.appointments(start, start + DURATION)):
+        if any(b.id != exclude for b in tx.bookings.list(start, start + DURATION)):
             raise RuleError(
                 "BOOKING_ALREADY_EXISTS",
                 "Ese horario ya no está disponible. Puedo consultar otros horarios.",
@@ -98,7 +98,7 @@ class BarbershopService:
             )
             booked = [
                 b
-                for b in tx.appointments(first, last, actor)
+                for b in tx.bookings.list(first, last, actor)
                 if b.id != exclude and b.timestamp >= first
             ]
             if len(booked) + amount > MAX_MONTHLY:
@@ -119,7 +119,7 @@ class BarbershopService:
         ).hexdigest()
         with self.store.transaction() as tx:
             now = self.clock()
-            receipt = tx.receipt(request_id)
+            receipt = tx.receipts.get(request_id)
             if receipt:
                 if receipt["fingerprint"] != fingerprint:
                     raise RuleError(
@@ -133,24 +133,24 @@ class BarbershopService:
                         "La reserva de esa operación ya fue cancelada.",
                         404,
                     )
-                bookings = [tx.appointment(i) for i in receipt["ids"]]
+                bookings = [tx.bookings.get(i) for i in receipt["ids"]]
                 if not all(bookings):
                     raise RuleError(
                         "BOOKING_NOT_FOUND", "La reserva ya no existe.", 404
                     )
                 return {"bookings": [b.result(now) for b in bookings]}
-            if not tx.customer(actor):
+            if not tx.clients.get(actor):
                 raise RuleError(
                     "CLIENT_NOT_FOUND", "No encuentro una ficha con ese teléfono.", 404
                 )
-            calendar, _ = tx.calendar()
+            calendar, _ = tx.schedule.get()
             starts = [timestamp + DURATION * i for i in range(count)]
             for start in starts:
                 validate_start(calendar, start, now)
                 self._free(tx, start)
             self._quota(tx, actor, starts)
-            bookings = [tx.insert(start, actor) for start in starts]
-            tx.save_receipt(request_id, fingerprint, [b.id for b in bookings])
+            bookings = [tx.bookings.create(start, actor) for start in starts]
+            tx.receipts.save(request_id, fingerprint, [b.id for b in bookings])
             return {"bookings": [b.result(now) for b in bookings]}
 
     def list_bookings(self, actor, start=None, end=None, admin=False):
@@ -169,37 +169,38 @@ class BarbershopService:
         with self.store.transaction() as tx:
             return [
                 b.result(now)
-                for b in tx.appointments(start, end, None if admin else phone(actor))
+                for b in tx.bookings.list(start, end, None if admin else phone(actor))
             ]
 
     def get(self, actor, identifier, admin=False):
         with self.store.transaction() as tx:
-            booking = tx.appointment(identifier)
+            booking = tx.bookings.get(identifier)
             require_owner(booking, phone(actor) if not admin else None, admin)
             return booking.result(self.clock())
 
     def move(self, actor, identifier, timestamp, admin=False):
         with self.store.transaction() as tx:
             now = self.clock()
-            booking = tx.appointment(identifier)
+            booking = tx.bookings.get(identifier)
             require_owner(booking, phone(actor) if not admin else None, admin)
             require_not_started(booking, now)
-            calendar, _ = tx.calendar()
+            calendar, _ = tx.schedule.get()
             validate_start(calendar, timestamp, now)
             self._free(tx, timestamp, identifier)
             self._quota(tx, booking.telephone, [timestamp], identifier)
-            return tx.move(identifier, timestamp).result(now)
+            return tx.bookings.move(identifier, timestamp).result(now)
 
     def cancel(self, actor, identifier, admin=False):
         with self.store.transaction() as tx:
-            booking = tx.appointment(identifier)
+            booking = tx.bookings.get(identifier)
             require_owner(booking, phone(actor) if not admin else None, admin)
             require_not_started(booking, self.clock(), cancelling=True)
-            tx.delete(identifier)
+            tx.bookings.delete(identifier)
+            tx.receipts.invalidate_for_booking(identifier)
 
     def settings(self):
         with self.store.transaction() as tx:
-            calendar, version = tx.calendar()
+            calendar, version = tx.schedule.get()
             return dict(**calendar.result(), version=version)
 
     def save_settings(self, weekly, exceptions, version):
@@ -211,7 +212,7 @@ class BarbershopService:
         )
         calendar.validate()
         with self.store.transaction() as tx:
-            _, current_version = tx.calendar()
+            _, current_version = tx.schedule.get()
             if version != current_version:
                 raise RuleError(
                     "STALE_CONFIG",
@@ -219,14 +220,14 @@ class BarbershopService:
                     409,
                 )
             now = self.clock()
-            bookings = tx.appointments(now, datetime(9999, 1, 1))
+            bookings = tx.bookings.list(now, datetime(9999, 1, 1))
             if any(not calendar.accepts(b.timestamp) for b in bookings):
                 raise RuleError(
                     "SCHEDULE_CONFLICT",
                     "Hay citas que no encajan en el nuevo horario. Modifícalas o cancélalas primero.",
                     409,
                 )
-            tx.save_calendar(calendar)
+            tx.schedule.save(calendar)
             return dict(**calendar.result(), version=current_version + 1)
 
 
