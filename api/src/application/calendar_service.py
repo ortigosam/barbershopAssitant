@@ -19,7 +19,7 @@ from src.domain.calendar import (
 from src.domain.schedule import madrid_now
 
 
-class CalendarService:
+class BarbershopService:
     def __init__(self, store: CalendarStore, clock=madrid_now):
         self.store, self.clock = store, clock
 
@@ -228,3 +228,7 @@ class CalendarService:
                 )
             tx.save_calendar(calendar)
             return dict(**calendar.result(), version=current_version + 1)
+
+
+# Compatibility alias for clients importing the previous combined service.
+CalendarService = BarbershopService

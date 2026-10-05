@@ -7,7 +7,7 @@ from typing import Protocol
 from src.domain.calendar import Appointment, Calendar
 
 
-class CalendarTransaction(Protocol):
+class BarbershopTransaction(Protocol):
     def calendar(self) -> tuple[Calendar, int]: ...
     def save_calendar(self, calendar: Calendar) -> None: ...
     def customer(self, telephone: str) -> dict | None: ...
@@ -23,5 +23,10 @@ class CalendarTransaction(Protocol):
     def save_receipt(self, key: str, fingerprint: str, ids: list[int]) -> None: ...
 
 
-class CalendarStore(Protocol):
-    def transaction(self) -> AbstractContextManager[CalendarTransaction]: ...
+class BarbershopStore(Protocol):
+    def transaction(self) -> AbstractContextManager[BarbershopTransaction]: ...
+
+
+# Compatibility aliases for the former calendar-oriented names.
+CalendarTransaction = BarbershopTransaction
+CalendarStore = BarbershopStore

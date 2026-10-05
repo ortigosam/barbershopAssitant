@@ -13,7 +13,7 @@ from src.domain.calendar import Appointment, Calendar, RuleError
 LOCK_ID = 78204312
 
 
-class PostgresCalendarStore:
+class PostgresBarbershopStore:
     def __init__(self, pool):
         self.pool = pool
 
@@ -121,3 +121,7 @@ class Transaction:
             "INSERT INTO calendar_receipt(request_id,fingerprint,ids) VALUES(%s,%s,%s::jsonb)",
             (key, fingerprint, json.dumps(ids)),
         )
+
+
+# Compatibility alias for the old module/class name.
+PostgresCalendarStore = PostgresBarbershopStore

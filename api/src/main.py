@@ -6,7 +6,10 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
-from src.api.routes.calendar import admin, router
+from src.api.routes.admin import router as admin_router
+from src.api.routes.availability import router as availability_router
+from src.api.routes.bookings import router as bookings_router
+from src.api.routes.clients import router as clients_router
 from src.database.connection import pool
 from src.domain.calendar import RuleError
 
@@ -27,8 +30,10 @@ app = FastAPI(
 )
 
 
-app.include_router(router)
-app.include_router(admin)
+app.include_router(clients_router)
+app.include_router(availability_router)
+app.include_router(bookings_router)
+app.include_router(admin_router)
 
 
 @app.exception_handler(RuleError)
