@@ -1,222 +1,195 @@
-# Webhook inicial de WhatsApp
+# Reservas por WhatsApp
 
-Este módulo es independiente de la API y del agente actuales. Recibe mensajes
-de WhatsApp Cloud API de Meta y responde siempre con esta encuesta:
+El webhook recibe mensajes firmados de Meta y utiliza la API de la barbería.
+Un saludo muestra «¿Qué necesitas hacer?»:
 
-> ¿Qué necesitas hacer?
+- **Reservar Cita**: esta semana/siguiente → días libres → horas libres →
+  comprobar ficha y preguntar nombre si no existe → reservar una cita de 20 minutos.
+  La API vuelve a comprobar disponibilidad y cupo al guardar. Sólo tras confirmarlo:
+  «Reserva aceptada. Nos vemos el miércoles 7 de octubre a las 10:00.».
+- **Cancelar Cita**: consultar citas propias → elegir cita → cancelar mediante
+  la API → «Cita cancelada con éxito.».
+- **Ver mis próximas Citas**: mostrar las próximas citas del remitente.
 
-- Reservar Cita
-- Cancelar Cita
-- Ver mis próximas Citas
+Escribe **menú** para volver al inicio. Las listas largas tienen ocho opciones
+por página y navegación Anterior/Más opciones. Sin huecos o citas se informa al cliente.
+Horarios, cierres, límites y zona Europe/Madrid siguen siendo responsabilidad de la API.
+El modelo de lenguaje no interviene.
 
-Las opciones sólo se muestran; todavía no ejecutan ninguna acción. Se envían
-como una lista interactiva para conservar el texto completo de cada opción.
+## Arquitectura
 
-## 1. Crear las credenciales en Meta
+| Archivo | Responsabilidad |
+| --- | --- |
+| main.py | Firma HMAC, extracción de mensajes y composición de dependencias |
+| contracts.py | Protocols de API y mensajería |
+| workflow.py | Recorridos deterministas, opciones y respuestas |
+| booking_api.py | Adaptador HTTP de la API existente |
+| meta_client.py | Envío a Meta |
 
-En [Meta for Developers](https://developers.facebook.com/):
+El teléfono procede del evento firmado, se normaliza con + y se envía como
+X-Customer-Phone con AGENT_API_TOKEN. La API comprueba la propiedad de cada cita.
+Sólo se procesan eventos del META_PHONE_NUMBER_ID configurado. No se aceptan
+selecciones de otro teléfono ni de un menú sustituido. META_APP_SECRET es obligatorio.
 
-1. Crea una aplicación de tipo Business.
-2. Añade el producto **WhatsApp** y crea o vincula un número de prueba.
-3. Copia el `Temporary access token` para la primera prueba y el `Phone number ID`.
-4. En la configuración básica de la aplicación copia el `App Secret`.
-5. Genera un valor largo y aleatorio para `WEBHOOK_VERIFY_TOKEN`. Este valor lo
-   escribirás también en el panel de Meta para verificar el webhook.
+El webhook no utiliza una base de datos propia. Conserva temporalmente en memoria
+la selección de cada teléfono y los eventos recientes, con caducidad de una hora.
+Al reiniciar se pierden los menús en curso: basta escribir menú de nuevo. Los datos
+de clientes y citas permanecen en PostgreSQL a través de la API existente.
 
-Para producción, sustituye el token temporal por un token permanente asociado a
-un usuario del sistema con los permisos mínimos de WhatsApp Business.
+Las reservas incluyen request_id estable para los reintentos de un mismo hueco
+ofrecido. Ante timeout se pide consultar las citas, sin inventar una confirmación.
+Los duplicados de un evento se omiten mientras están en memoria. Esta versión
+utiliza un único worker; antes de desplegar varias instancias habrá que compartir
+el estado de los menús. No garantiza entrega exactamente una vez de mensajes.
 
-## 2. Configuración local
+### Llamadas directas a la API existente
 
-Desde la raíz del proyecto:
+| Selección recibida en el webhook | Petición a api/ |
+| --- | --- |
+| Esta semana / siguiente | GET /bookings/availability?week=current o next&count=1 |
+| Día | GET /bookings/availability y filtrar el día seleccionado |
+| Hora | GET /clients/me y POST /bookings |
+| Nombre de cliente nuevo | POST /clients/me, después POST /bookings |
+| Cancelar / ver citas | GET /bookings |
+| Cita elegida para cancelar | DELETE /bookings/{id} |
+
+El cliente HTTP adjunta siempre Authorization: Bearer AGENT_API_TOKEN y
+X-Customer-Phone con el remitente del evento. Nunca llama a los endpoints /admin.
+El webhook presenta menús; api/ calcula los huecos y guarda o elimina las citas.
+
+## Configuración
+
+Si ya tienes un .env configurado, consérvalo. Para una instalación nueva:
 
 ```bash
-cp whatsapp/.env.example whatsapp/.env
+test -f whatsapp/.env || cp whatsapp/.env.example whatsapp/.env
 ```
 
-Rellena `whatsapp/.env`:
+Variables de whatsapp/.env:
 
 ```dotenv
-META_ACCESS_TOKEN=...
-META_PHONE_NUMBER_ID=...
-META_APP_SECRET=...
-WEBHOOK_VERIFY_TOKEN=...
+META_ACCESS_TOKEN=token_de_meta
+META_PHONE_NUMBER_ID=id_del_numero_business
+META_APP_SECRET=secreto_de_la_aplicacion_meta
+WEBHOOK_VERIFY_TOKEN=token_elegido_por_ti
 META_API_VERSION=v23.0
+BARBERSHOP_API_URL=http://127.0.0.1:8000
+AGENT_API_TOKEN=mismo_valor_que_en_api
 ```
 
-El archivo `.env` no debe subirse a Git.
+Para facilitar la configuración local, se carga primero api/.env y después
+whatsapp/.env: así AGENT_API_TOKEN se reutiliza si no lo defines en el segundo.
+Las variables del proceso tienen prioridad. No se usa ADMIN_API_TOKEN para
+gestionar citas de clientes. En un despliegue separado, configura explícitamente
+AGENT_API_TOKEN y BARBERSHOP_API_URL en el servicio WhatsApp. Reinicia después
+de cambiar .env. No publiques credenciales ni archivos de estado.
 
-## 3. Instalar y levantar el webhook
+En Meta Developers, dentro de tu aplicación:
 
-La forma aislada es instalar sus dependencias y levantar sólo este módulo:
+- WhatsApp / API Setup: token de acceso y Phone Number ID (no el teléfono literal).
+- Configuración básica: App Secret.
+- WEBHOOK_VERIFY_TOKEN lo generas tú, por ejemplo con openssl rand -hex 32.
+  Debe coincidir en .env y en el formulario de verificación de Meta.
+
+El token temporal de Meta debe renovarse cuando caduque. Consulta su expiración
+en el panel. Para uso continuo configura credenciales de sistema apropiadas.
+
+## Prueba local paso a paso
+
+1. Abre Docker Desktop y comprueba que PostgreSQL está activo.
+2. Desde la raíz, arranca la API principal si no está ya levantada:
 
 ```bash
-uv pip install -r whatsapp/requirements.txt
-uv run fastapi dev whatsapp/main.py --port 8010
+uv run fastapi dev api/src/main.py
 ```
 
-El endpoint local será `http://localhost:8010/webhook`.
-
-Meta necesita una URL HTTPS pública. Para desarrollo puedes publicar el puerto
-con un túnel como ngrok:
-
-```bash
-ngrok http 8010
-```
-
-Usa la URL HTTPS que te dé el túnel seguida de `/webhook`, por ejemplo:
-`https://tu-subdominio.ngrok-free.app/webhook`.
-
-## 4. Configurar el webhook en Meta
-
-En WhatsApp > Configuration > Webhook:
-
-- Callback URL: URL HTTPS pública más `/webhook`.
-- Verify token: exactamente el valor de `WEBHOOK_VERIFY_TOKEN`.
-- Suscribe el campo `messages`.
-
-Meta hará una petición `GET` con `hub.mode`, `hub.verify_token` y
-`hub.challenge`. El módulo responde el challenge sólo si el token coincide.
-
-Cuando llegue un mensaje, Meta hará un `POST`. El módulo valida
-`X-Hub-Signature-256` si `META_APP_SECRET` está configurado, extrae el número
-remitente y llama a Graph API para enviar la encuesta. Los eventos de estado que
-no contienen `messages` se aceptan sin enviar nada.
-
-## 5. Prueba completa paso a paso
-
-Necesitas tres terminales abiertas. La API principal y Ollama no son necesarios
-para esta prueba, porque este webhook todavía no consulta la base de datos ni el
-agente.
-
-### Terminal 1: levantar el webhook
-
-Desde la raíz del proyecto:
+3. En otra terminal, desde la raíz, arranca el webhook:
 
 ```bash
 uv run fastapi dev whatsapp/main.py --port 8010
 ```
 
-Comprueba que aparece:
+Las dependencias del módulo figuran en whatsapp/requirements.txt. La instalación
+actual del proyecto ya dispone de ellas. Para un entorno separado, instálalas
+allí con uv pip install -r whatsapp/requirements.txt.
 
-```text
-Uvicorn running on http://127.0.0.1:8010
-```
-
-### Terminal 2: publicar el puerto con ngrok
-
-Si aún no lo tienes instalado en macOS:
-
-```bash
-brew install ngrok
-```
-
-Configura una sola vez el authtoken de tu cuenta de ngrok:
-
-```bash
-ngrok config add-authtoken TU_AUTHTOKEN
-```
-
-Después inicia el túnel:
+4. En otra terminal, publica el webhook:
 
 ```bash
 ngrok http 8010
 ```
 
-Busca la línea `Forwarding`. Tendrás una URL parecida a:
+Si falta ngrok, instala con brew install ngrok. Registra una vez tu authtoken
+con ngrok config add-authtoken TU_AUTHTOKEN, obtenido desde el panel de tu cuenta.
 
-```text
-https://abc123.ngrok-free.dev -> http://localhost:8010
-```
-
-La URL pública del webhook será esa dirección seguida de `/webhook`:
-
-```text
-https://abc123.ngrok-free.dev/webhook
-```
-
-### Configurar la URL en Meta
-
-En Meta Developers abre tu aplicación y entra en:
-
-```text
-WhatsApp → Configuration → Webhooks
-```
-
-Introduce:
-
-- **Callback URL**: la URL pública de ngrok terminada en `/webhook`.
-- **Verify token**: exactamente el valor de `WEBHOOK_VERIFY_TOKEN` que tienes en
-  `whatsapp/.env`.
-
-Pulsa **Verify and Save** y suscribe el campo `messages`.
-
-Meta hará un `GET /webhook` para validar la URL. Si el token coincide, el
-servidor devuelve el `hub.challenge` y Meta confirma la configuración.
-
-### Terminal 3: comprobar la verificación manualmente
-
-También puedes probar el endpoint local con:
+5. En Meta, configura Callback URL con la URL HTTPS mostrada por ngrok más
+   /webhook. Ejemplo: https://tu-dominio.ngrok-free.dev/webhook.
+   En Verify token pega WEBHOOK_VERIFY_TOKEN. Pulsa Verify and Save y suscribe messages.
+   Si esto ya está hecho y la URL sigue siendo la misma, no hay que repetirlo.
+6. Para comprobar manualmente la verificación local, desde otra terminal:
 
 ```bash
 curl "http://localhost:8010/webhook?hub.mode=subscribe&hub.verify_token=TU_TOKEN&hub.challenge=12345"
 ```
 
-La respuesta correcta es:
+Debe devolver 12345. GET valida la configuración; los mensajes llegan por POST.
 
-```text
-12345
-```
+7. Si usas el número de prueba de Meta, autoriza tu teléfono en su panel.
+8. Envía Hola desde ese teléfono. Pulsa Reservar Cita. Si es nuevo, escribe tu
+   nombre. Selecciona semana, día y hora. Recibirás confirmación y aparecerá en la agenda.
+9. Escribe menú y elige Ver mis próximas Citas. Comprueba la cita creada.
+10. Escribe menú, elige Cancelar Cita y selecciona esa cita. Comprueba la
+    confirmación y que el hueco vuelve a estar disponible.
 
-### Enviar el primer mensaje
+### Diagnóstico mediante logs
 
-1. En Meta añade tu número personal como destinatario de prueba si usas el
-   número de prueba de WhatsApp.
-2. Desde ese teléfono, escribe `Hola` al número de WhatsApp Business.
-3. Meta enviará un `POST /webhook` al túnel de ngrok.
-4. El servidor extraerá el número del remitente y llamará a la Graph API de
-   Meta.
-5. Recibirás una lista con `Reservar Cita`, `Cancelar Cita` y `Ver mis próximas
-   Citas`.
+El webhook registra cada etapa en la terminal donde se ejecuta: mensaje recibido,
+teléfono enmascarado, llamada a `api/`, código HTTP, tiempo de respuesta y envío
+a Meta. Los tokens nunca se imprimen y el teléfono sólo muestra sus cuatro últimos
+dígitos.
 
-Puedes ver las peticiones recibidas en el inspector de ngrok:
-
-```text
-http://127.0.0.1:4040
-```
-
-En la terminal del webhook deberías ver una petición parecida a:
-
-```text
-POST /webhook 200 OK
-```
-
-### Si reinicias ngrok
-
-En el plan gratuito la URL puede cambiar al reiniciar el túnel. Si cambia,
-actualiza la Callback URL en Meta y vuelve a pulsar **Verify and Save**. El
-`WEBHOOK_VERIFY_TOKEN` no cambia mientras mantengas el mismo valor en
-`whatsapp/.env`.
-
-## 6. Prueba rápida del endpoint
-
-Verifica el endpoint con la misma forma que usa el panel de Meta:
+Para obtener más detalle:
 
 ```bash
-curl "http://localhost:8010/webhook?hub.mode=subscribe&hub.verify_token=TU_TOKEN&hub.challenge=12345"
+LOG_LEVEL=DEBUG uv run fastapi dev whatsapp/main.py --port 8010
 ```
 
-La respuesta correcta es `12345`. Después escribe al número de prueba desde un
-número autorizado en Meta. Cada mensaje debe recibir la encuesta.
+Mensajes útiles:
 
-Para probar sólo la extracción sin llamar a Meta, importa `incoming_senders` en
-una prueba Python. Para probar el envío real se necesita un token válido y un
-número de WhatsApp configurado en Meta.
+- `message_received`: Meta entregó un mensaje válido y qué selección recibió.
+- `api_request` / `api_response`: petición a la API principal y su resultado.
+- `api_request_network_error`: la API no está accesible o agotó el timeout.
+- `meta_send_failed`: Meta rechazó el mensaje o no respondió; revisa el `status`
+  y el fragmento de error mostrado.
+- `workflow_api_error`: la API respondió un error de negocio, como cliente
+  inexistente o hueco ocupado.
 
-## 7. Límites actuales
+Después de cambiar `.env`, reinicia el webhook para cargar la configuración.
 
-Este módulo no llama al agente, no consulta PostgreSQL, no crea clientes y no
-reserva, cancela ni consulta citas. Es sólo el canal inicial. La siguiente fase
-puede mapear los `reply.id` (`reserve_booking`, `cancel_booking` y
-`list_bookings`) a la API existente, validando siempre el negocio y el teléfono
-antes de ejecutar una operación.
+Estos pasos crean y cancelan citas reales en tu base. Ollama no es necesario.
+Mantén activos API, PostgreSQL, webhook y ngrok. El inspector de ngrok está
+normalmente en http://127.0.0.1:4040. Si cambia la URL pública al reiniciar,
+actualiza el callback en Meta; si se mantiene, no necesitas reconfigurarlo.
+
+## Errores habituales
+
+- 403 en GET: verify token no coincide.
+- 403 en POST: firma incorrecta o App Secret equivocado.
+- Mensajes ignorados: comprueba suscripción messages y Phone Number ID.
+- No se cargan huecos: comprueba API en 8000, PostgreSQL y AGENT_API_TOKEN.
+- 503 al responder: Meta no aceptó/confirmó el envío; comprueba token y destinatario.
+  El evento puede reintentarse; mientras siga en memoria reutiliza la respuesta.
+- Menú caducado: escribe menú para iniciar de nuevo.
+
+## Pruebas automatizadas sin mensajes reales
+
+Desde la raíz:
+
+```bash
+PYTHONPATH=api:api/tests:. uv run pytest -q whatsapp/tests
+```
+
+Cubren reserva, paginación, alta de cliente, consulta, cancelación, propiedad,
+duplicados, menús antiguos, timeout, reintento del envío, firma,
+destinatario Business y contratos con las rutas reales de API usando almacenamiento
+de prueba. No realizan envíos reales a Meta ni alteran PostgreSQL.
