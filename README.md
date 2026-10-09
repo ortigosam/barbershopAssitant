@@ -95,7 +95,7 @@ En otra terminal, desde la raíz:
 
 ```bash
 cd api
-uv run fastapi dev src/main.py
+uv run fastapi dev api/src/main.py
 ```
 
 Mantén la terminal abierta. La API aplica las reglas y las transacciones; el
