@@ -37,8 +37,9 @@ def menu(state, body, options, page=0):
     state["choices"] = {}
     rows = []
     for title, action in visible:
-        identifier = {"reserve": "reserve_booking", "cancel": "cancel_booking",
-                      "list": "list_bookings"}.get(action["kind"], uuid4().hex)
+        identifier = {"reserve": "reserve_booking", "cancel": "cancel_booking"}.get(
+            action["kind"], uuid4().hex
+        )
         state["choices"][identifier] = action
         rows.append({"id": identifier, "title": title[:24]})
     return {"type": "interactive", "interactive": {
@@ -51,7 +52,6 @@ def main_menu(state, body="¿Qué necesitas hacer?"):
     return menu(state, body, [
         ("Reservar Cita", {"kind": "reserve"}),
         ("Cancelar Cita", {"kind": "cancel"}),
-        ("Ver mis próximas Citas", {"kind": "list"}),
     ])
 
 
@@ -96,7 +96,7 @@ class Workflow:
         if error.code == "UNCERTAIN":
             # Retain the offered action and its idempotency key for safe retries.
             return text("No puedo confirmar el resultado porque la API no ha respondido. "
-                        "Escribe menú y consulta tus próximas citas antes de volver a intentarlo.")
+                        "Escribe menú y vuelve a intentarlo en unos segundos.")
         messages = {
             "BOOKING_ALREADY_EXISTS": "Ese horario ya no está disponible. Consulta otro hueco.",
             "INVALID_SLOT": "Ese horario ya no está disponible. Consulta otro hueco.",
@@ -125,7 +125,7 @@ class Workflow:
             return await self.reserve(phone, state, state.pop("pending_slot"))
         if not message.selection:
             return main_menu(state)
-        roots = {"reserve_booking": "reserve", "cancel_booking": "cancel", "list_bookings": "list"}
+        roots = {"reserve_booking": "reserve", "cancel_booking": "cancel"}
         action = ({"kind": roots[message.selection]} if message.selection in roots
                   else state.get("choices", {}).get(message.selection))
         if not action:
@@ -136,15 +136,7 @@ class Workflow:
             return menu(state, saved["body"], saved["options"], action["page"])
         if kind == "reserve":
             state.clear()
-            return self.weeks(state)
-        if kind == "week":
-            slots = await self.api.slots(phone, action["week"])
-            dates = sorted({slot["timestamp"][:10] for slot in slots})
-            if not dates:
-                return main_menu(state, "No hay huecos disponibles en esa semana. ¿Qué necesitas hacer?")
-            return menu(state, "¿Qué día prefieres?", [
-                (f"{DAYS[datetime.fromisoformat(day).weekday()]} {day[8:10]}/{day[5:7]}",
-                 {"kind": "day", "day": day, "week": action["week"]}) for day in dates])
+            return await self.available_days(phone, state)
         if kind == "day":
             slots = await self.api.slots(phone, action["week"])
             choices = [(slot["timestamp"][11:16], {
@@ -163,14 +155,10 @@ class Workflow:
                 state["pending_slot"] = action
                 return text("Para confirmar tu primera reserva, ¿cómo te llamas? Escribe menú para volver al inicio.")
             return await self.reserve(phone, state, action)
-        if kind in ("cancel", "list"):
+        if kind == "cancel":
             bookings = await self.api.bookings(phone)
             if not bookings:
                 return main_menu(state, "No tienes próximas citas.")
-            if kind == "list":
-                state.clear()
-                return text("Tus próximas citas:\n" + "\n".join(
-                    f"• {date_text(b['timestamp'])}" for b in bookings) + "\n\nEscribe menú para volver al inicio.")
             return menu(state, "¿Qué cita quieres cancelar?", [
                 (datetime.fromisoformat(b["timestamp"]).strftime("%d/%m/%Y %H:%M"),
                  {"kind": "delete", "id": b["id"]}) for b in bookings])
@@ -180,15 +168,24 @@ class Workflow:
             return text("Cita cancelada con éxito.")
         return main_menu(state)
 
+    async def available_days(self, phone, state):
+        """Offer dates from this and next week in one message."""
+        current, following = await asyncio.gather(
+            self.api.slots(phone, "current"), self.api.slots(phone, "next")
+        )
+        choices = []
+        for week, slots in (("current", current), ("next", following)):
+            for day in sorted({slot["timestamp"][:10] for slot in slots}):
+                choices.append((
+                    f"{DAYS[datetime.fromisoformat(day).weekday()]} {day[8:10]}/{day[5:7]}",
+                    {"kind": "day", "day": day, "week": week},
+                ))
+        if not choices:
+            return main_menu(state, "No hay huecos disponibles. ¿Qué necesitas hacer?")
+        return menu(state, "¿Qué día prefieres?", choices)
+
     async def reserve(self, phone, state, action):
         result = await self.api.reserve(phone, action["timestamp"], action["request_id"])
         confirmed = result["bookings"][0]["timestamp"]
         state.clear()
         return text(f"Reserva aceptada. Nos vemos el {date_text(confirmed)}.")
-
-    @staticmethod
-    def weeks(state):
-        return menu(state, "¿Para qué semana quieres reservar?", [
-            ("Esta semana", {"kind": "week", "week": "current"}),
-            ("La siguiente semana", {"kind": "week", "week": "next"}),
-        ])

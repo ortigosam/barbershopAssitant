@@ -3,14 +3,12 @@
 El webhook recibe mensajes firmados de Meta y utiliza la API de la barbería.
 Un saludo muestra «¿Qué necesitas hacer?»:
 
-- **Reservar Cita**: esta semana/siguiente → días libres → horas libres →
+- **Reservar Cita**: días libres de esta semana y la siguiente → horas libres →
   comprobar ficha y preguntar nombre si no existe → reservar una cita de 20 minutos.
   La API vuelve a comprobar disponibilidad y cupo al guardar. Sólo tras confirmarlo:
   «Reserva aceptada. Nos vemos el miércoles 7 de octubre a las 10:00.».
 - **Cancelar Cita**: consultar citas propias → elegir cita → cancelar mediante
   la API → «Cita cancelada con éxito.».
-- **Ver mis próximas Citas**: mostrar las próximas citas del remitente.
-
 Escribe **menú** para volver al inicio. Las listas largas tienen ocho opciones
 por página y navegación Anterior/Más opciones. Sin huecos o citas se informa al cliente.
 Horarios, cierres, límites y zona Europe/Madrid siguen siendo responsabilidad de la API.
@@ -37,7 +35,8 @@ Al reiniciar se pierden los menús en curso: basta escribir menú de nuevo. Los 
 de clientes y citas permanecen en PostgreSQL a través de la API existente.
 
 Las reservas incluyen request_id estable para los reintentos de un mismo hueco
-ofrecido. Ante timeout se pide consultar las citas, sin inventar una confirmación.
+ofrecido. Ante timeout se informa de que no puede confirmarse, sin inventar una
+confirmación.
 Los duplicados de un evento se omiten mientras están en memoria. Esta versión
 utiliza un único worker; antes de desplegar varias instancias habrá que compartir
 el estado de los menús. No garantiza entrega exactamente una vez de mensajes.
@@ -46,11 +45,11 @@ el estado de los menús. No garantiza entrega exactamente una vez de mensajes.
 
 | Selección recibida en el webhook | Petición a api/ |
 | --- | --- |
-| Esta semana / siguiente | GET /bookings/availability?week=current o next&count=1 |
+| Reservar Cita | GET /bookings/availability para esta semana y la siguiente |
 | Día | GET /bookings/availability y filtrar el día seleccionado |
 | Hora | GET /clients/me y POST /bookings |
 | Nombre de cliente nuevo | POST /clients/me, después POST /bookings |
-| Cancelar / ver citas | GET /bookings |
+| Cancelar Cita | GET /bookings |
 | Cita elegida para cancelar | DELETE /bookings/{id} |
 
 El cliente HTTP adjunta siempre Authorization: Bearer AGENT_API_TOKEN y
@@ -135,10 +134,10 @@ curl "http://localhost:8010/webhook?hub.mode=subscribe&hub.verify_token=TU_TOKEN
 Debe devolver 12345. GET valida la configuración; los mensajes llegan por POST.
 
 7. Si usas el número de prueba de Meta, autoriza tu teléfono en su panel.
-8. Envía Hola desde ese teléfono. Pulsa Reservar Cita. Si es nuevo, escribe tu
-   nombre. Selecciona semana, día y hora. Recibirás confirmación y aparecerá en la agenda.
-9. Escribe menú y elige Ver mis próximas Citas. Comprueba la cita creada.
-10. Escribe menú, elige Cancelar Cita y selecciona esa cita. Comprueba la
+8. Envía Hola desde ese teléfono. Pulsa Reservar Cita. Selecciona directamente
+   un día disponible y después una hora. Si es nuevo, escribe tu nombre.
+   Recibirás confirmación y aparecerá en la agenda.
+9. Escribe menú, elige Cancelar Cita y selecciona esa cita. Comprueba la
     confirmación y que el hueco vuelve a estar disponible.
 
 ### Diagnóstico mediante logs

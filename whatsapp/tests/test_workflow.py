@@ -31,8 +31,7 @@ def test_reserve_pages_identity_duplicate_and_stale(tmp_path):
         flow, api, messenger, store = setup(tmp_path)
         await flow.handle(Incoming("1", PHONE, "hola"))
         await flow.handle(Incoming("2", PHONE, selection=option(messenger, "Reservar Cita")))
-        await flow.handle(Incoming("3", PHONE, selection=option(messenger, "Esta semana")))
-        await flow.handle(Incoming("4", PHONE, selection=option(messenger, "miércoles 07/10")))
+        await flow.handle(Incoming("3", PHONE, selection=option(messenger, "miércoles 07/10")))
         assert len(messenger.send.await_args.args[1]["interactive"]["action"]["sections"][0]["rows"]) == 9
         await flow.handle(Incoming("5", PHONE, selection=option(messenger, "Más opciones")))
         assert option(messenger, "20:00")
@@ -54,18 +53,14 @@ def test_registration_cancel_list(tmp_path):
         api.customer.side_effect = ApiError("CLIENT_NOT_FOUND")
         await flow.handle(Incoming("1", PHONE, "hola"))
         await flow.handle(Incoming("2", PHONE, selection=option(messenger, "Reservar Cita")))
-        await flow.handle(Incoming("week", PHONE, selection=option(messenger, "Esta semana")))
-        await flow.handle(Incoming("day", PHONE, selection=option(messenger, "miércoles 07/10")))
+        await flow.handle(Incoming("week", PHONE, selection=option(messenger, "miércoles 07/10")))
         await flow.handle(Incoming("slot", PHONE, selection=option(messenger, "10:00")))
         assert "cómo te llamas" in messenger.send.await_args.args[1]["text"]["body"]
         await flow.handle(Incoming("3", PHONE, "Ana"))
         api.create_customer.assert_awaited_once_with(PHONE, "Ana")
         await flow.handle(Incoming("4", PHONE, "menú"))
-        await flow.handle(Incoming("5", PHONE, selection=option(messenger, "Ver mis próximas Citas")))
-        assert "miércoles 7 de octubre" in messenger.send.await_args.args[1]["text"]["body"]
-        await flow.handle(Incoming("6", PHONE, "menú"))
-        await flow.handle(Incoming("7", PHONE, selection=option(messenger, "Cancelar Cita")))
-        await flow.handle(Incoming("8", PHONE, selection=option(messenger, "07/10/2026 10:00")))
+        await flow.handle(Incoming("5", PHONE, selection=option(messenger, "Cancelar Cita")))
+        await flow.handle(Incoming("6", PHONE, selection=option(messenger, "07/10/2026 10:00")))
         api.cancel.assert_awaited_once_with(PHONE, 8)
         assert messenger.send.await_args.args[1]["text"]["body"] == "Cita cancelada con éxito."
     asyncio.run(scenario())

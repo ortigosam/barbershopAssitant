@@ -49,13 +49,11 @@ def test_existing_api_contract_and_ownership(monkeypatch):
             workflow = Workflow(api, messenger)
             await workflow.handle(Incoming("hello", phone, "Hola"))
             await workflow.handle(Incoming("reserve", phone, selection="reserve_booking"))
-            for event_id in ("week", "day", "hour"):
+            for event_id in ("day", "hour"):
                 rows = messenger.send.await_args.args[1]["interactive"]["action"]["sections"][0]["rows"]
                 await workflow.handle(Incoming(event_id, phone, selection=rows[0]["id"]))
             assert "Reserva aceptada" in messenger.send.await_args.args[1]["text"]["body"]
             assert len(await api.bookings(phone)) == 1
-            await workflow.handle(Incoming("list", phone, selection="list_bookings"))
-            assert "Tus próximas citas" in messenger.send.await_args.args[1]["text"]["body"]
             await workflow.handle(Incoming("cancel", phone, selection="cancel_booking"))
             rows = messenger.send.await_args.args[1]["interactive"]["action"]["sections"][0]["rows"]
             await workflow.handle(Incoming("confirm_cancel", phone, selection=rows[0]["id"]))
